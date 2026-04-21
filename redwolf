@@ -9,6 +9,8 @@ ipv6 = true
 update-url = https://karrigan.oss-cn-shenzhen.aliyuncs.com/hphphp.conf
 
 [Rule]
+DOMAIN-SUFFIX,ip-api.com,PROXY
+DOMAIN-SUFFIX,ipify.org,PROXY
 DOMAIN-KEYWORD,nj,PROXY
 DOMAIN,down.anticheatexpert.com,PROXY
 DOMAIN,www.4399.com,PROXY
