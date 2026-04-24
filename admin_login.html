@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>风度安全 · 管理员登录</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <style>
+    :root {
+      --bg: #060b18;
+      --surface: #0c1220;
+      --surface2: #111827;
+      --border: rgba(0,240,255,0.12);
+      --accent: #00F0FF;
+      --purple: #8B5CF6;
+      --text: #e8f4ff;
+      --text-dim: #7a8fab;
+      --red: #f85149;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      position: relative;
+      overflow: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      top: -20%;
+      right: -10%;
+      width: 450px; height: 450px;
+      background: radial-gradient(ellipse, rgba(0,240,255,0.07) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      bottom: -15%;
+      left: -10%;
+      width: 400px; height: 400px;
+      background: radial-gradient(ellipse, rgba(139,92,246,0.08) 0%, transparent 65%);
+      pointer-events: none;
+    }
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,240,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,240,255,0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    .login-card {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 400px;
+      background: rgba(12,18,32,0.85);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2rem 1.8rem;
+      box-shadow:
+        0 24px 60px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.03) inset,
+        0 0 50px rgba(0,240,255,0.05) inset;
+      backdrop-filter: blur(24px);
+      margin: 1rem;
+    }
+
+    .brand-area {
+      text-align: center;
+      margin-bottom: 1.8rem;
+    }
+    .brand-icon {
+      width: 54px; height: 54px;
+      background: linear-gradient(135deg, rgba(0,240,255,0.12), rgba(139,92,246,0.2));
+      border: 1px solid rgba(0,240,255,0.3);
+      border-radius: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.55rem;
+      margin: 0 auto 0.8rem;
+      box-shadow: 0 0 28px rgba(0,240,255,0.18);
+    }
+    .brand-title {
+      font-size: 1rem;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: 0.08em;
+    }
+    .brand-title span { color: var(--accent); }
+    .brand-sub {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-top: 0.3rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .9rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: .3rem;
+    }
+    .section-sub {
+      color: var(--text-dim);
+      font-size: .8rem;
+      margin-bottom: 1.4rem;
+    }
+
+    .form-label {
+      display: block;
+      color: var(--text-dim);
+      font-size: .75rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: .4rem;
+    }
+    .form-control {
+      width: 100%;
+      background: rgba(255,255,255,0.04) !important;
+      border: 1px solid rgba(255,255,255,0.08) !important;
+      color: var(--text) !important;
+      border-radius: 10px;
+      padding: .68rem .9rem;
+      font-size: .9rem;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s, background .2s;
+    }
+    .form-control:focus {
+      border-color: rgba(0,240,255,0.45) !important;
+      background: rgba(0,240,255,0.04) !important;
+      box-shadow: 0 0 0 3px rgba(0,240,255,0.1) !important;
+    }
+    .form-control::placeholder { color: rgba(255,255,255,0.2); }
+
+    .btn-login {
+      display: block;
+      width: 100%;
+      margin-top: 1.2rem;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #00c8d8, #8B5CF6);
+      color: #fff;
+      font-weight: 700;
+      padding: .72rem .9rem;
+      font-size: .92rem;
+      letter-spacing: .06em;
+      cursor: pointer;
+      transition: opacity .2s, box-shadow .2s;
+      box-shadow: 0 0 22px rgba(0,240,255,0.15);
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-login::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.1), transparent);
+      pointer-events: none;
+    }
+    .btn-login:hover {
+      opacity: .88;
+      box-shadow: 0 0 36px rgba(0,240,255,0.25);
+    }
+
+    .alert {
+      border: 1px solid rgba(248,81,73,.3);
+      background: rgba(248,81,73,.08);
+      color: #ffb3ad;
+      font-size: .8rem;
+      padding: .6rem .8rem;
+      border-radius: 9px;
+      margin-bottom: 1rem;
+    }
+
+    .footer-copy {
+      text-align: center;
+      margin-top: 1.5rem;
+      font-size: .65rem;
+      color: rgba(255,255,255,0.18);
+      letter-spacing: .04em;
+    }
+  </style>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<div class="login-card">
+  <div class="brand-area">
+    <div class="brand-icon">🛡️</div>
+    <div class="brand-title"><span>风度安全</span> · 管理后台</div>
+    <div class="brand-sub">FengDu Security · Admin Console</div>
+  </div>
+
+  <div class="section-title">
+    <i class="bi bi-shield-lock-fill"></i>
+    管理员身份验证
+  </div>
+  <div class="section-sub">请输入管理员 Token 以进入控制台。</div>
+
+  <div id="errorBox" class="alert" style="display:none;">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+    <span id="errorText"></span>
+  </div>
+
+  <form id="loginForm">
+    <label for="admin_token" class="form-label">Admin Token</label>
+    <input
+      id="admin_token"
+      name="admin_token"
+      type="password"
+      class="form-control"
+      placeholder="请输入管理员访问令牌"
+      required
+      autocomplete="off"
+    />
+    <button type="submit" class="btn-login">
+      <i class="bi bi-box-arrow-in-right me-1"></i>进入控制台
+    </button>
+  </form>
+
+  <div class="footer-copy">© 2026 风度安全 (FengDu Security) - 专注底层防封穿透技术</div>
+</div>
+
+<script>
+  const form     = document.getElementById("loginForm");
+  const input    = document.getElementById("admin_token");
+  const errorBox = document.getElementById("errorBox");
+  const errorText = document.getElementById("errorText");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorBox.style.display = "none";
+    const token = input.value.trim();
+    if (!token) {
+      errorText.textContent = "请输入管理员 Token";
+      errorBox.style.display = "block";
+      return;
+    }
+    try {
+      const resp = await fetch("/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ admin_token: token }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        errorText.textContent = data.detail || "验证失败，请重试";
+        errorBox.style.display = "block";
+        return;
+      }
+      window.location.href = data.redirect || "/admin/dashboard";
+    } catch (err) {
+      errorText.textContent = "网络异常：" + err.message;
+      errorBox.style.display = "block";
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>风度安全 · 管理控制台</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" />
+  <style>
+    :root {
+      --bg: #060b18;
+      --surface: #0c1220;
+      --surface2: #101828;
+      --border: #172034;
+      --accent: #00F0FF;
+      --accent-dim: rgba(0,240,255,0.1);
+      --purple: #8B5CF6;
+      --purple-dim: rgba(139,92,246,0.12);
+      --text: #e8f4ff;
+      --text-dim: #7a8fab;
+      --green: #22c55e;
+      --red: #f85149;
+      --yellow: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      position: relative;
+    }
+
+    /* 背景网格 */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,240,255,0.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,240,255,0.018) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── 侧边栏 ── */
+    .sidebar {
+      width: 230px;
+      min-height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 1.2rem 0;
+      position: fixed;
+      top: 0; left: 0;
+      z-index: 100;
+    }
+    .sidebar .logo {
+      padding: 0 1.2rem 1.3rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0.9rem;
+    }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, rgba(0,240,255,0.15), rgba(139,92,246,0.2));
+      border: 1px solid rgba(0,240,255,0.25);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      margin-bottom: 0.55rem;
+      box-shadow: 0 0 16px rgba(0,240,255,0.12);
+    }
+    .sidebar .logo h5 {
+      font-size: 0.9rem;
+      font-weight: 800;
+      color: var(--accent);
+      margin: 0;
+      letter-spacing: 0.06em;
+    }
+    .sidebar .logo small {
+      color: var(--text-dim);
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+    }
+
+    .nav-item a {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.6rem 1.2rem;
+      color: var(--text-dim);
+      text-decoration: none;
+      border-radius: 8px;
+      margin: 0 0.5rem;
+      transition: background .15s, color .15s;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+    .nav-item a:hover,
+    .nav-item a.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .nav-item a.active {
+      border-left: 2px solid var(--accent);
+      padding-left: calc(1.2rem - 2px);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 0.8rem 1rem 0;
+      border-top: 1px solid var(--border);
+    }
+    .btn-logout {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-dim);
+      border-radius: 8px;
+      font-size: 0.82rem;
+      padding: 0.48rem 0.75rem;
+      transition: all .15s;
+      cursor: pointer;
+    }
+    .btn-logout:hover {
+      color: var(--red);
+      border-color: rgba(248,81,73,.4);
+      background: rgba(248,81,73,.06);
+    }
+
+    /* ── 主内容区 ── */
+    .main-content {
+      margin-left: 230px;
+      padding: 1.8rem 2rem;
+      min-height: 100vh;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── 卡片 ── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 1rem 1.4rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(0,240,255,0.02);
+    }
+    .panel-body { padding: 1.4rem; }
+
+    /* ── 表单元素 ── */
+    .form-control, .form-select {
+      background: var(--surface2) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text) !important;
+      border-radius: 8px;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: rgba(0,240,255,0.4) !important;
+      box-shadow: 0 0 0 3px rgba(0,240,255,0.1) !important;
+    }
+    .form-label { color: var(--text-dim); font-size: 0.8rem; margin-bottom: 0.3rem; }
+
+    .btn-primary-custom {
+      background: linear-gradient(135deg, #00c8d8, #8B5CF6);
+      border: none;
+      color: #fff;
+      border-radius: 8px;
+      padding: 0.5rem 1.2rem;
+      font-size: 0.875rem;
+      font-weight: 700;
+      transition: opacity .15s, box-shadow .15s;
+      box-shadow: 0 0 16px rgba(0,240,255,0.12);
+    }
+    .btn-primary-custom:hover {
+      opacity: 0.88;
+      color: #fff;
+      box-shadow: 0 0 24px rgba(0,240,255,0.22);
+    }
+
+    /* ── 表格 ── */
+    .table {
+      color: var(--text);
+      margin: 0;
+      font-size: 0.83rem;
+    }
+    .table th {
+      background: var(--surface2);
+      color: var(--text-dim);
+      font-weight: 600;
+      border-color: var(--border);
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+    }
+    .table td { border-color: var(--border); vertical-align: middle; }
+    .table tbody tr:hover { background: rgba(0,240,255,0.025); }
+
+    /* ── 状态徽章 ── */
+    .badge-status {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+      font-size: 0.74rem;
+      font-weight: 600;
+    }
+    .status-active   { background: rgba(0,240,255,.1);   color: var(--accent); }
+    .status-expired  { background: rgba(245,158,11,.1);  color: var(--yellow); }
+    .status-banned   { background: rgba(248,81,73,.1);   color: var(--red); }
+    .status-unused   { background: rgba(122,143,171,.1); color: var(--text-dim); }
+    .status-used     { background: rgba(34,197,94,.1);   color: var(--green); }
+
+    /* ── 工具栏 ── */
+    .table-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1.4rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      background: rgba(0,0,0,0.1);
+    }
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem;
+      padding: 0.75rem 1.4rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.06);
+    }
+    .filter-row input[type="datetime-local"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 7px;
+      padding: 0.38rem 0.55rem;
+      font-size: 0.8rem;
+    }
+    .btn-mini {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-dim);
+      border-radius: 6px;
+      font-size: .73rem;
+      padding: 0.2rem 0.48rem;
+      margin-right: 0.25rem;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+    }
+    .btn-mini:hover { color: var(--accent); border-color: rgba(0,240,255,0.35); }
+
+    /* ── 生成的卡密列表 ── */
+    #generatedKeysList {
+      display: none;
+      margin-top: 1rem;
+      background: var(--surface2);
+      border: 1px solid rgba(0,240,255,0.15);
+      border-radius: 10px;
+      padding: 0.9rem 1rem;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 0.82rem;
+      color: var(--accent);
+      line-height: 1.9;
+    }
+
+    /* ── Toast 通知 ── */
+    .toast-container { z-index: 9999; }
+    .toast {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      min-width: 260px;
+    }
+    .toast .toast-header {
+      background: var(--surface2);
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* section 切换 */
+    .section { display: none; }
+    .section.active { display: block; }
+  </style>
+</head>
+<body>
+
+<!-- ── 侧边栏 ──────────────────────────────────────────── -->
+<div class="sidebar">
+  <div class="logo">
+    <div class="logo-icon">🛡️</div>
+    <h5>风度安全 管理控制台</h5>
+    <small>FengDu Security Console</small>
+  </div>
+  <ul class="list-unstyled mb-0">
+    <li class="nav-item">
+      <a href="#" class="active" onclick="switchSection('keys', this)">
+        <i class="bi bi-key-fill"></i> 权益卡密管理
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="#" onclick="switchSection('users', this)">
+        <i class="bi bi-people-fill"></i> 节点用户管理
+      </a>
+    </li>
+    <li class="nav-item">
+      <a href="#" onclick="switchSection('files', this)">
+        <i class="bi bi-folder-fill"></i> 证书与配置
+      </a>
+    </li>
+  </ul>
+  <div class="sidebar-footer">
+    <form method="post" action="/admin/logout">
+      <button type="submit" class="btn-logout">
+        <i class="bi bi-box-arrow-right me-1"></i>退出登录
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ── 主内容区 ──────────────────────────────────────────── -->
+<div class="main-content">
+
+  <!-- ══ 卡密管理 Section ══ -->
+  <div id="section-keys" class="section active">
+
+    <!-- 生成卡密 -->
+    <div class="panel">
+      <div class="panel-header">
+        <i class="bi bi-plus-circle-fill" style="color:var(--accent);"></i>
+        批量生成权益卡密
+      </div>
+      <div class="panel-body">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">生成数量</label>
+            <input type="number" id="genCount" class="form-control" value="10" min="1" max="500" />
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">节点权益时长</label>
+            <select id="genDays" class="form-select">
+              <option value="1">1 天（日卡）</option>
+              <option value="7" selected>7 天（周卡）</option>
+              <option value="30">30 天（月卡）</option>
+              <option value="90">90 天（季卡）</option>
+              <option value="365">365 天（年卡）</option>
+            </select>
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn-primary-custom w-100" onclick="generateKeys()">
+              <i class="bi bi-magic me-1"></i>立即生成
+            </button>
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-outline-secondary w-100" style="border-radius:8px; font-size:.875rem; border-color:var(--border); color:var(--text-dim);" onclick="copyAllKeys()">
+              <i class="bi bi-clipboard me-1"></i>复制全部卡密
+            </button>
+          </div>
+        </div>
+        <div id="generatedKeysList"></div>
+      </div>
+    </div>
+
+    <!-- 卡密列表 -->
+    <div class="panel">
+      <div class="table-toolbar">
+        <span id="keysCount">共 0 条权益卡密</span>
+        <button class="btn-primary-custom" onclick="loadKeys()">
+          <i class="bi bi-arrow-clockwise me-1"></i>刷新列表
+        </button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>卡密字符串</th>
+              <th>权益时长</th>
+              <th>状态</th>
+              <th>生成时间</th>
+            </tr>
+          </thead>
+          <tbody id="keysTableBody">
+            <tr><td colspan="5" class="text-center py-4" style="color:var(--text-dim);">点击「刷新列表」加载数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /section-keys -->
+
+  <!-- ══ 用户管理 Section ══ -->
+  <div id="section-users" class="section">
+    <div class="panel">
+      <div class="table-toolbar">
+        <span id="usersCount">共 0 条节点用户</span>
+        <button class="btn-primary-custom" onclick="loadUsers()">
+          <i class="bi bi-arrow-clockwise me-1"></i>刷新列表
+        </button>
+      </div>
+      <div class="filter-row">
+        <span style="font-size:.8rem;color:var(--text-dim);align-self:center;">按激活时间筛选：</span>
+        <input type="datetime-local" id="usersStartTime" />
+        <input type="datetime-local" id="usersEndTime" />
+        <button class="btn-primary-custom" style="padding:.38rem .85rem;" onclick="loadUsers()">查询</button>
+        <button class="btn btn-outline-secondary" style="padding:.38rem .85rem;border-radius:7px;font-size:.8rem;border-color:var(--border);color:var(--text-dim);" onclick="resetUserFilter()">重置</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="table table-hover">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>用户名</th>
+              <th>Device ID（Token）</th>
+              <th>使用卡密</th>
+              <th>到期时间</th>
+              <th>状态</th>
+              <th>激活时间</th>
+              <th>时长调整</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody">
+            <tr><td colspan="9" class="text-center py-4" style="color:var(--text-dim);">点击「刷新列表」加载数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /section-users -->
+
+  <!-- ══ 文件管理 Section ══ -->
+  <div id="section-files" class="section">
+
+    <!-- TLS 证书管理 -->
+    <div class="panel">
+      <div class="panel-header">
+        <i class="bi bi-shield-lock-fill" style="color:var(--accent);"></i>
+        TLS 证书管理
+        <small style="color:var(--text-dim);font-weight:400;margin-left:.5rem;">static/cert/</small>
+      </div>
+      <div class="panel-body">
+        <div class="mb-3 d-flex gap-2 align-items-end flex-wrap">
+          <div style="flex:1;min-width:200px;">
+            <label class="form-label">选择证书文件（.crt / .pem / .key / .p12）</label>
+            <input type="file" id="certFileInput" class="form-control" accept=".crt,.pem,.cer,.key,.p12" />
+          </div>
+          <button class="btn-primary-custom" onclick="uploadFile('cert')" style="white-space:nowrap;">
+            <i class="bi bi-upload me-1"></i>上传证书
+          </button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="table table-hover">
+            <thead>
+              <tr><th>文件名</th><th>大小</th><th>修改时间</th><th>操作</th></tr>
+            </thead>
+            <tbody id="certFilesBody">
+              <tr><td colspan="4" class="text-center py-3" style="color:var(--text-dim);">切换到此页面时自动加载</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 配置文件管理 -->
+    <div class="panel">
+      <div class="panel-header">
+        <i class="bi bi-file-earmark-code-fill" style="color:var(--purple);"></i>
+        配置文件管理
+        <small style="color:var(--text-dim);font-weight:400;margin-left:.5rem;">static/config/</small>
+      </div>
+      <div class="panel-body">
+        <div class="mb-3 d-flex gap-2 align-items-end flex-wrap">
+          <div style="flex:1;min-width:200px;">
+            <label class="form-label">选择配置文件（.conf / .yaml / .json / .txt）</label>
+            <input type="file" id="configFileInput" class="form-control" accept=".conf,.yaml,.yml,.json,.txt" />
+          </div>
+          <button class="btn-primary-custom" onclick="uploadFile('config')" style="white-space:nowrap;">
+            <i class="bi bi-upload me-1"></i>上传配置
+          </button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="table table-hover">
+            <thead>
+              <tr><th>文件名</th><th>大小</th><th>修改时间</th><th>操作</th></tr>
+            </thead>
+            <tbody id="configFilesBody">
+              <tr><td colspan="4" class="text-center py-3" style="color:var(--text-dim);">切换到此页面时自动加载</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /section-files -->
+
+</div><!-- /main-content -->
+
+<!-- Toast 通知 -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+  <div id="appToast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="toast-header">
+      <i class="bi bi-shield-fill me-2" style="color:var(--accent);"></i>
+      <strong class="me-auto">系统通知</strong>
+      <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+    </div>
+    <div class="toast-body" id="toastBody"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+let lastGeneratedKeys = [];
+
+function switchSection(name, el) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item a').forEach(a => a.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'files') loadFiles();
+}
+
+async function apiRequest(method, url, body) {
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) opts.body = JSON.stringify(body);
+    const resp = await fetch(url, opts);
+    const data = await resp.json();
+    if (!resp.ok) {
+      showToast(data.detail || `请求失败 (${resp.status})`, 'error');
+      return null;
+    }
+    return data;
+  } catch (e) {
+    showToast('网络错误：' + e.message, 'error');
+    return null;
+  }
+}
+
+async function generateKeys() {
+  const count = parseInt(document.getElementById('genCount').value);
+  const days  = parseInt(document.getElementById('genDays').value);
+  if (isNaN(count) || count < 1) { showToast('数量不合法', 'error'); return; }
+
+  const data = await apiRequest('POST', '/admin/generate_keys', { count, duration_days: days });
+  if (!data) return;
+
+  lastGeneratedKeys = data.keys || [];
+  const box = document.getElementById('generatedKeysList');
+  box.style.display = 'block';
+  box.textContent = lastGeneratedKeys.join('\n');
+  showToast(`成功生成 ${data.generated} 条 ${days} 天权益卡密`, 'success');
+  loadKeys();
+}
+
+function copyAllKeys() {
+  if (!lastGeneratedKeys.length) { showToast('请先生成卡密', 'error'); return; }
+  copyText(lastGeneratedKeys.join('\n'))
+    .then(() => showToast(`已复制 ${lastGeneratedKeys.length} 条卡密`, 'success'))
+    .catch((err) => showToast('复制失败：' + err.message, 'error'));
+}
+
+async function loadKeys() {
+  const data = await apiRequest('GET', '/admin/list_keys');
+  if (!data) return;
+
+  document.getElementById('keysCount').textContent = `共 ${data.total} 条权益卡密`;
+  const tbody = document.getElementById('keysTableBody');
+
+  if (!data.keys.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="text-center py-4" style="color:var(--text-dim);">暂无卡密数据</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.keys.map((k, i) => `
+    <tr>
+      <td style="color:var(--text-dim);">${i + 1}</td>
+      <td><code style="color:var(--accent); font-size:.82rem;">${escapeHtml(k.key_string)}</code></td>
+      <td>${k.duration_days} 天</td>
+      <td>
+        <span class="badge-status ${k.is_used ? 'status-used' : 'status-unused'}">
+          ${k.is_used ? '✓ 已激活' : '○ 未使用'}
+        </span>
+      </td>
+      <td style="color:var(--text-dim);">${k.created_at || '-'}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadUsers() {
+  const startTime = document.getElementById('usersStartTime').value;
+  const endTime   = document.getElementById('usersEndTime').value;
+  const qs = new URLSearchParams();
+  if (startTime) qs.set('start_time', startTime);
+  if (endTime)   qs.set('end_time', endTime);
+  const url = '/admin/list_users' + (qs.toString() ? `?${qs.toString()}` : '');
+  const data = await apiRequest('GET', url);
+  if (!data) return;
+
+  document.getElementById('usersCount').textContent = `共 ${data.total} 条节点用户`;
+  const tbody = document.getElementById('usersTableBody');
+
+  if (!data.users.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4" style="color:var(--text-dim);">当前筛选条件下无用户</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.users.map((u, i) => {
+    const statusClass = { active:'status-active', expired:'status-expired', banned:'status-banned' }[u.status] || '';
+    const statusText  = { active:'● 正常接入', expired:'◐ 已到期', banned:'✕ 已封禁' }[u.status] || u.status;
+    const isBanned = u.status === 'banned';
+    return `
+      <tr>
+        <td style="color:var(--text-dim);">${i + 1}</td>
+        <td style="font-weight:600;">${escapeHtml(u.username || '-')}</td>
+        <td>
+          <code style="font-size:.78rem; color:#c4b5fd;">${u.device_id}</code>
+          <button class="btn btn-sm ms-1" style="padding:1px 5px;font-size:.7rem;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--text-dim);"
+            onclick="copyDeviceId('${u.device_id}')">
+            <i class="bi bi-clipboard"></i>
+          </button>
+        </td>
+        <td><code style="font-size:.78rem; color:var(--accent);">${u.last_key || '-'}</code></td>
+        <td style="color:var(--text-dim);">${u.expire_time || '-'}</td>
+        <td><span class="badge-status ${statusClass}">${statusText}</span></td>
+        <td style="color:var(--text-dim);">${u.created_at || '-'}</td>
+        <td>
+          <button class="btn-mini" onclick="adjustUserDays('${u.device_id}', 1)">+1天</button>
+          <button class="btn-mini" onclick="adjustUserDays('${u.device_id}', 7)">+7天</button>
+          <button class="btn-mini" onclick="adjustUserDays('${u.device_id}', -1)">-1天</button>
+          <button class="btn-mini" onclick="customAdjustDays('${u.device_id}')">自定义</button>
+        </td>
+        <td>
+          ${isBanned
+            ? `<button class="btn btn-sm" style="background:rgba(34,197,94,.12);color:var(--green);border:none;border-radius:6px;font-size:.78rem;" onclick="unbanUser('${u.device_id}')"><i class="bi bi-unlock me-1"></i>解封</button>`
+            : `<button class="btn btn-sm" style="background:rgba(248,81,73,.1);color:var(--red);border:none;border-radius:6px;font-size:.78rem;" onclick="banUser('${u.device_id}')"><i class="bi bi-slash-circle me-1"></i>封禁</button>`
+          }
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function banUser(deviceId) {
+  if (!confirm(`确认封禁用户 ${deviceId}？`)) return;
+  const data = await apiRequest('POST', '/admin/ban_user', { device_id: deviceId });
+  if (data) { showToast(data.message, 'success'); loadUsers(); }
+}
+
+async function unbanUser(deviceId) {
+  if (!confirm(`确认解封用户 ${deviceId}？`)) return;
+  const data = await apiRequest('POST', '/admin/unban_user', { device_id: deviceId });
+  if (data) { showToast(data.message, 'success'); loadUsers(); }
+}
+
+function resetUserFilter() {
+  document.getElementById('usersStartTime').value = '';
+  document.getElementById('usersEndTime').value = '';
+  loadUsers();
+}
+
+async function adjustUserDays(deviceId, deltaDays) {
+  const sign = deltaDays > 0 ? '+' : '';
+  if (!confirm(`确认调整 ${sign}${deltaDays} 天？`)) return;
+  const data = await apiRequest('POST', '/admin/adjust_user_time', {
+    device_id: deviceId,
+    delta_days: deltaDays,
+  });
+  if (data) { showToast(data.message, 'success'); loadUsers(); }
+}
+
+function customAdjustDays(deviceId) {
+  const input = prompt('请输入调整天数（正数加时，负数减时）', '1');
+  if (input === null) return;
+  const delta = parseInt(input, 10);
+  if (isNaN(delta) || delta === 0) {
+    showToast('请输入非 0 的整数天数', 'error');
+    return;
+  }
+  adjustUserDays(deviceId, delta);
+}
+
+function copyDeviceId(deviceId) {
+  copyText(deviceId)
+    .then(() => showToast('已复制', 'success'))
+    .catch((err) => showToast('复制失败：' + err.message, 'error'));
+}
+
+function copyText(text) {
+  if (!text) return Promise.reject(new Error('内容为空'));
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) resolve();
+      else reject(new Error('浏览器不支持复制'));
+    } catch (e) { reject(e); }
+  });
+}
+
+function showToast(msg, type) {
+  document.getElementById('toastBody').textContent = msg;
+  const toastEl = document.getElementById('appToast');
+  toastEl.style.borderColor = type === 'error'
+    ? 'rgba(248,81,73,.45)'
+    : 'rgba(0,240,255,.35)';
+  bootstrap.Toast.getOrCreateInstance(toastEl, { delay: 3000 }).show();
+}
+
+// ══ 文件管理 ══════════════════════════════════════════════════════
+
+async function loadFiles() {
+  const data = await apiRequest('GET', '/admin/list_files');
+  if (!data) return;
+  renderFileTable('certFilesBody',   'cert',   data.cert   || []);
+  renderFileTable('configFilesBody', 'config', data.config || []);
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function renderFileTable(tbodyId, category, files) {
+  const tbody = document.getElementById(tbodyId);
+  if (!files.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center py-3" style="color:var(--text-dim);">暂无文件</td></tr>';
+    return;
+  }
+  tbody.innerHTML = files.map(f => {
+    const sizeKB = (f.size / 1024).toFixed(1);
+    const eName = escapeHtml(f.filename);
+    const jName = f.filename.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `
+      <tr>
+        <td><code style="color:var(--accent);font-size:.82rem;">${eName}</code></td>
+        <td style="color:var(--text-dim);">${sizeKB} KB</td>
+        <td style="color:var(--text-dim);">${f.modified}</td>
+        <td>
+          <a class="btn-mini" href="/static/${category}/${encodeURIComponent(f.filename)}" download style="text-decoration:none;">
+            <i class="bi bi-download"></i> 下载
+          </a>
+          <button class="btn-mini" style="color:var(--red);border-color:rgba(248,81,73,.3);" onclick="deleteFile('${category}','${jName}')">
+            <i class="bi bi-trash3"></i> 删除
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function uploadFile(category) {
+  const inputId = category === 'cert' ? 'certFileInput' : 'configFileInput';
+  const input = document.getElementById(inputId);
+  if (!input.files.length) { showToast('请先选择文件', 'error'); return; }
+  const fd = new FormData();
+  fd.append('category', category);
+  fd.append('file', input.files[0]);
+  try {
+    const resp = await fetch('/admin/upload_file', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (!resp.ok) { showToast(data.detail || '上传失败', 'error'); return; }
+    showToast(data.message, 'success');
+    input.value = '';
+    loadFiles();
+  } catch (e) {
+    showToast('上传失败：' + e.message, 'error');
+  }
+}
+
+async function deleteFile(category, filename) {
+  if (!confirm(`确认删除 ${category}/${filename}？`)) return;
+  const data = await apiRequest('POST', '/admin/delete_file', { category, filename });
+  if (data) { showToast(data.message, 'success'); loadFiles(); }
+}
+</script>
+</body>
+</html>
