@@ -30,11 +30,18 @@ import secrets
 import string
 import base64
 import threading
+import time
+import subprocess
 from typing import Optional
 from datetime import datetime, timedelta
 from urllib.parse import quote as _urlquote
 
 import requests
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 from fastapi import FastAPI, Depends, HTTPException, Header, Request, UploadFile, File, Form
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (
@@ -51,7 +58,7 @@ from sqlalchemy import update, text, inspect
 from sqlalchemy.orm import Session
 
 import models
-from database import engine, get_db
+from database import engine, get_db, SessionLocal
 
 logger = logging.getLogger("cardkey")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -70,20 +77,40 @@ models.Base.metadata.create_all(bind=engine)
 
 
 def _ensure_schema_migrations() -> None:
+    """轻量数据库迁移：为旧库补新增字段。"""
     inspector = inspect(engine)
-    if "users" not in inspector.get_table_names():
-        return
-    existing_cols = {c["name"] for c in inspector.get_columns("users")}
+
+    table_names = set(inspector.get_table_names())
     with engine.begin() as conn:
-        if "ss_password" not in existing_cols:
-            conn.execute(text("ALTER TABLE users ADD COLUMN ss_password VARCHAR(128)"))
-            logger.info("[DB 迁移] users 表已补 ss_password 列")
+        if "users" in table_names:
+            user_cols = {c["name"] for c in inspector.get_columns("users")}
+            if "ss_password" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN ss_password VARCHAR(128)"))
+                logger.info("[DB 迁移] users 表已补 ss_password 列")
+            if "socks_port" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN socks_port INTEGER"))
+                logger.info("[DB 迁移] users 表已补 socks_port 列")
+            if "source_admin_id" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN source_admin_id INTEGER"))
+                logger.info("[DB 迁移] users 表已补 source_admin_id 列")
+
+        if "keys" in table_names:
+            key_cols = {c["name"] for c in inspector.get_columns("keys")}
+            if "created_by_admin_id" not in key_cols:
+                conn.execute(text("ALTER TABLE keys ADD COLUMN created_by_admin_id INTEGER"))
+                logger.info("[DB 迁移] keys 表已补 created_by_admin_id 列")
+            if "used_by_username" not in key_cols:
+                conn.execute(text("ALTER TABLE keys ADD COLUMN used_by_username VARCHAR(64)"))
+                logger.info("[DB 迁移] keys 表已补 used_by_username 列")
+            if "used_at" not in key_cols:
+                conn.execute(text("ALTER TABLE keys ADD COLUMN used_at DATETIME"))
+                logger.info("[DB 迁移] keys 表已补 used_at 列")
 
 
 _ensure_schema_migrations()
 
 
-app = FastAPI(title="卡密管理系统（SOCKS5）", version="3.1.0")
+app = FastAPI(title="卡密会员管理系统（SOCKS5）", version="4.0.0-production")
 templates = Jinja2Templates(directory="templates")
 
 # ── 静态资源挂载（证书 / 配置文件 下载） ────────────────────────────────
@@ -140,15 +167,59 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
 # 全局配置
 # ══════════════════════════════════════════════════════════════════════
 
-ADMIN_TOKEN         = os.getenv("ADMIN_TOKEN", "fanxiaoyu6F@")
+ADMIN_TOKEN         = os.getenv("ADMIN_TOKEN", "CHANGE_ME_NOW")
 BASE_URL            = os.getenv("BASE_URL", "http://localhost:8000")
 ADMIN_SESSION_TOKEN = secrets.token_urlsafe(32)
 
+# 首次启动会自动创建这个总管理员。也可以用环境变量覆盖。
+SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "windsup516@gmail.com")
+SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "fanxiaoyu6F@")
+
 # ── SOCKS5 节点对外参数（下发给客户端 / 生成 socks5:// URI） ───────────
-SOCKS_SERVER_HOST = os.getenv("SOCKS_SERVER_HOST", "106.14.137.59").strip()
+SOCKS_SERVER_HOST = os.getenv("SOCKS_SERVER_HOST", "202.189.9.12").strip()
 SOCKS_SERVER_PORT = int(os.getenv("SOCKS_SERVER_PORT", "28888"))
 SOCKS_NODE_NAME   = os.getenv("SOCKS_NODE_NAME", "风度防封专线").strip()
 SOCKS_TLS_ENABLED = os.getenv("SOCKS_TLS", "1") != "0"
+
+# gost 一人一端口范围（需与 sync_gost.py 保持一致）
+GOST_PORT_START = int(os.getenv("GOST_PORT_START", "28889"))
+GOST_PORT_END   = int(os.getenv("GOST_PORT_END", "39999"))
+GOST_SYNC_TIMEOUT_SECONDS = int(os.getenv("GOST_SYNC_TIMEOUT_SECONDS", "120"))
+
+# ── 时间显示配置 ─────────────────────────────────────────────
+# 数据库存 UTC；展示给用户和后台时转成本地时间。默认北京时间。
+LOCAL_TIME_OFFSET_HOURS = int(os.getenv("LOCAL_TIME_OFFSET_HOURS", "8"))
+LOCAL_TZ_NAME = os.getenv("LOCAL_TZ_NAME", "北京时间")
+
+
+def _now_utc() -> datetime:
+    return datetime.utcnow()
+
+
+def _to_local(dt: Optional[datetime]) -> Optional[datetime]:
+    if not dt:
+        return None
+    return dt + timedelta(hours=LOCAL_TIME_OFFSET_HOURS)
+
+
+def _to_utc_from_local(dt: datetime) -> datetime:
+    return dt - timedelta(hours=LOCAL_TIME_OFFSET_HOURS)
+
+
+def _fmt_dt(dt: Optional[datetime], *, suffix: bool = False) -> Optional[str]:
+    local_dt = _to_local(dt)
+    if not local_dt:
+        return None
+    text = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{text} {LOCAL_TZ_NAME}" if suffix else text
+
+
+def _ceil_days_left(expire_time: datetime, now: Optional[datetime] = None) -> int:
+    now = now or _now_utc()
+    seconds = int((expire_time - now).total_seconds())
+    if seconds <= 0:
+        return 0
+    return (seconds + 86399) // 86400
 
 # ══════════════════════════════════════════════════════════════════════
 # ★★★ 3x-ui 面板对接配置（mixed 协议 / SOCKS5+HTTP） ★★★
@@ -161,7 +232,7 @@ SOCKS_TLS_ENABLED = os.getenv("SOCKS_TLS", "1") != "0"
 # ══════════════════════════════════════════════════════════════════════
 XUI_HOST             = os.getenv("XUI_HOST",      "http://127.0.0.1:2053").rstrip("/")
 XUI_USERNAME         = os.getenv("XUI_USERNAME",  "admin")
-XUI_PASSWORD         = os.getenv("XUI_PASSWORD",  "admin")
+XUI_PASSWORD         = os.getenv("XUI_PASSWORD",  "CHANGE_ME_XUI_PASSWORD")
 XUI_SOCKS_INBOUND_ID = int(os.getenv("XUI_SOCKS_INBOUND_ID", "3"))
 XUI_VERIFY_SSL       = os.getenv("XUI_VERIFY_SSL",  "1") != "0"
 XUI_WEB_BASE_PATH    = os.getenv("XUI_WEB_BASE_PATH", "").strip().strip("/")
@@ -176,6 +247,57 @@ def _hash_password(password: str) -> str:
     """SHA-256 密码哈希（固定盐，抗彩虹表）。"""
     salt = "cardkey-salt-2024"
     return hashlib.sha256(f"{salt}{password}".encode()).hexdigest()
+
+
+def _ensure_super_admin() -> None:
+    """确保总管理员账号存在。"""
+    db = SessionLocal()
+    try:
+        admin = db.query(models.Admin).filter(models.Admin.username == SUPER_ADMIN_USERNAME).first()
+        if not admin:
+            admin = models.Admin(
+                username=SUPER_ADMIN_USERNAME,
+                password_hash=_hash_password(SUPER_ADMIN_PASSWORD),
+                role="super",
+                status="active",
+                approved_at=_now_utc(),
+            )
+            db.add(admin)
+            db.commit()
+            logger.info("[管理员] 已自动创建总管理员：%s", SUPER_ADMIN_USERNAME)
+        else:
+            changed = False
+            if admin.role != "super":
+                admin.role = "super"
+                changed = True
+            if admin.status != "active":
+                admin.status = "active"
+                changed = True
+            # 保留已有密码，避免每次部署覆盖；如果密码为空才补。
+            if not admin.password_hash:
+                admin.password_hash = _hash_password(SUPER_ADMIN_PASSWORD)
+                changed = True
+            if changed:
+                db.commit()
+    finally:
+        db.close()
+
+
+def _make_admin_session(admin_id: int) -> str:
+    sig = hashlib.sha256(f"{ADMIN_SESSION_TOKEN}:{admin_id}".encode()).hexdigest()
+    return f"{admin_id}:{sig}"
+
+
+def _parse_admin_session(value: str) -> Optional[int]:
+    try:
+        admin_id_text, sig = (value or "").split(":", 1)
+        admin_id = int(admin_id_text)
+    except Exception:
+        return None
+    expected = hashlib.sha256(f"{ADMIN_SESSION_TOKEN}:{admin_id}".encode()).hexdigest()
+    if secrets.compare_digest(sig, expected):
+        return admin_id
+    return None
 
 
 def _runtime_base_url(request: Optional[Request] = None) -> str:
@@ -197,35 +319,38 @@ def _generate_key_string() -> str:
     return "VIP-" + "-".join(segs)
 
 
-def _build_socks5_uri(username: str, password: str) -> str:
+def _build_socks5_uri(username: str, password: str, port: Optional[int] = None) -> str:
     """
     构造标准的 SOCKS5 一键导入 URI（小火箭 / Clash / V2rayN 全兼容）：
 
         socks5://BASE64("账号:密码")@HOST:PORT#节点名
 
+    - port 优先使用用户自己的 socks_port，实现「一人一端口」
     - BASE64 采用 url-safe 编码并去掉填充等号，避免 `/` `+` `=` 破坏 URL
     - 节点名里的中文按 RFC3986 做 URL 编码
     - **不携带任何 TLS / 加密参数**（纯明文 SOCKS5，用于国内游戏直连加速）
     """
     if not username or not password:
         return ""
+    use_port = int(port or SOCKS_SERVER_PORT)
     raw = f"{username}:{password}".encode("utf-8")
     b64 = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
     name_q = _urlquote(SOCKS_NODE_NAME, safe="")
-    return f"socks5://{b64}@{SOCKS_SERVER_HOST}:{SOCKS_SERVER_PORT}#{name_q}"
+    return f"socks5://{b64}@{SOCKS_SERVER_HOST}:{use_port}#{name_q}"
 
 
-def _build_proxy_payload(username: str, password: str) -> dict:
+def _build_proxy_payload(username: str, password: str, port: Optional[int] = None) -> dict:
     """统一的 SOCKS5 参数返回体（注册/续期/查询 成功时都用它）。"""
+    use_port = int(port or SOCKS_SERVER_PORT)
     return {
         "type":      "socks5",
         "host":      SOCKS_SERVER_HOST,
-        "port":      SOCKS_SERVER_PORT,
+        "port":      use_port,
         "tls":       "TLS（自签名证书）" if SOCKS_TLS_ENABLED else "无（明文）",
         "node_name": SOCKS_NODE_NAME,
         "username":  username,
         "password":  password,
-        "socks5_uri": _build_socks5_uri(username, password),
+        "socks5_uri": _build_socks5_uri(username, password, use_port),
     }
 
 
@@ -443,6 +568,80 @@ def _sync_xui_remove_now(username: str) -> None:
     except Exception as e:
         logger.warning("[3x-ui] 删除客户端失败（已忽略）：%s | %s", username, e)
 
+# gost 同步采用“合并排队 + 后台执行”：避免注册/续期接口等待全量 scp/restart 导致手机端超时
+_gost_sync_state_lock = threading.Lock()
+_gost_sync_running = False
+_gost_sync_pending = False
+
+
+def _sync_gost_users_now() -> None:
+    """在当前线程执行一次 gost 全量同步。不要在 HTTP 请求链路里直接调用。"""
+    try:
+        subprocess.run(
+            ["python3", "/opt/ios-rule/sync_gost.py"],
+            check=True,
+            timeout=GOST_SYNC_TIMEOUT_SECONDS,
+        )
+        logger.info("[gost] 用户同步成功")
+    except Exception as e:
+        logger.warning("[gost] 用户同步失败：%s", e)
+
+
+def _gost_sync_worker() -> None:
+    """后台 worker。若同步期间又收到请求，结束后再补跑一次，避免并发启动很多 sync_gost.py。"""
+    global _gost_sync_running, _gost_sync_pending
+    while True:
+        with _gost_sync_state_lock:
+            if not _gost_sync_pending:
+                _gost_sync_running = False
+                return
+            _gost_sync_pending = False
+        _sync_gost_users_now()
+
+
+def _sync_gost_users() -> None:
+    """请求一次 gost 同步：立即返回，真正同步在后台执行。"""
+    global _gost_sync_running, _gost_sync_pending
+    with _gost_sync_state_lock:
+        _gost_sync_pending = True
+        if _gost_sync_running:
+            logger.info("[gost] 同步已在运行，本次请求已合并排队")
+            return
+        _gost_sync_running = True
+
+    threading.Thread(
+        target=_gost_sync_worker,
+        name="gost-sync-worker",
+        daemon=True,
+    ).start()
+
+
+def _assign_missing_socks_port(user: "models.User", db: Session) -> None:
+    """
+    给 active 用户快速分配 socks_port，避免等待 sync_gost.py 后才有端口。
+    sync_gost.py 仍负责在 202 上创建/启动实际服务。
+    """
+    if getattr(user, "socks_port", None):
+        return
+
+    used_ports = {
+        row[0]
+        for row in db.query(models.User.socks_port)
+        .filter(models.User.socks_port.isnot(None))
+        .all()
+        if row[0] is not None
+    }
+
+    port = GOST_PORT_START
+    while port in used_ports:
+        port += 1
+    if port > GOST_PORT_END:
+        raise HTTPException(status_code=500, detail="端口池已用完，请联系管理员扩容")
+
+    user.socks_port = port
+    db.commit()
+    db.refresh(user)
+    logger.info("[gost] 已为用户分配独立端口：%s -> %s", user.username, port)
 
 def _sync_xui_upsert(user: "models.User") -> None:
     """把 3x-ui upsert 丢到后台线程，不阻塞 HTTP 响应。"""
@@ -466,18 +665,96 @@ def _sync_xui_remove(user: "models.User") -> None:
     ).start()
 
 
+
 # ══════════════════════════════════════════════════════════════════════
-# 管理员鉴权依赖
+# 到期控制与自动禁用
 # ══════════════════════════════════════════════════════════════════════
 
-def verify_admin(request: Request, x_admin_token: Optional[str] = Header(default=None)):
-    if x_admin_token and secrets.compare_digest(x_admin_token, ADMIN_TOKEN):
-        return
-    session_cookie = request.cookies.get("admin_session")
-    if session_cookie and secrets.compare_digest(session_cookie, ADMIN_SESSION_TOKEN):
-        return
-    raise HTTPException(status_code=401, detail="管理员未登录或登录已失效")
+def _mark_user_expired_if_needed(user: "models.User", db: Session, *, remove_from_xui: bool = True) -> bool:
+    """若用户已到期，更新数据库状态，并按需从 3x-ui 入站删除该账号。"""
+    now = _now_utc()
 
+    if user.status == "active" and user.expire_time < now:
+        user.status = "expired"
+        db.commit()
+        db.refresh(user)
+        _sync_gost_users()
+
+        if remove_from_xui:
+            _sync_xui_remove(user)
+
+        return True
+
+    return False
+
+
+def _expire_checker_loop() -> None:
+    """后台守护线程：定时扫描过期用户，防止用户不访问网页时仍保留在 3x-ui。"""
+    interval = int(os.getenv("EXPIRE_CHECK_INTERVAL_SECONDS", "60"))
+    while True:
+        db = SessionLocal()
+        try:
+            now = _now_utc()
+            users = db.query(models.User).filter(
+                models.User.status == "active",
+                models.User.expire_time < now,
+            ).all()
+            changed = False
+            for user in users:
+                user.status = "expired"
+                db.commit()
+                db.refresh(user)
+                _sync_xui_remove(user)
+                changed = True
+                logger.info("[到期检查] 用户已到期并触发删除：%s", user.username)
+            if changed:
+                _sync_gost_users()
+        except Exception as exc:
+            logger.warning("[到期检查] 扫描失败：%s", exc)
+        finally:
+            db.close()
+        time.sleep(max(10, interval))
+
+
+@app.on_event("startup")
+def _startup_tasks() -> None:
+    if ADMIN_TOKEN == "CHANGE_ME_NOW":
+        logger.warning("[安全提醒] ADMIN_TOKEN 仍是默认值，请在 .env 或 systemd 环境变量中修改。")
+    if XUI_PASSWORD == "CHANGE_ME_XUI_PASSWORD":
+        logger.warning("[安全提醒] XUI_PASSWORD 仍是默认占位符，请配置真实 3x-ui 面板密码。")
+    _ensure_super_admin()
+    threading.Thread(target=_expire_checker_loop, name="expire-checker", daemon=True).start()
+    logger.info("[启动] 到期自动检查线程已启动")
+# ══════════════════════════════════════════════════════════════════════
+# 管理员鉴权依赖（RBAC）
+# ══════════════════════════════════════════════════════════════════════
+
+def verify_admin(request: Request, db: Session = Depends(get_db)) -> models.Admin:
+    """必须是已登录且 active 的管理员。返回当前管理员对象。"""
+    session_cookie = request.cookies.get("admin_session") or ""
+    admin_id = _parse_admin_session(session_cookie)
+    if not admin_id:
+        raise HTTPException(status_code=401, detail="管理员未登录或登录已失效")
+
+    admin = db.query(models.Admin).filter(models.Admin.id == admin_id).first()
+    if not admin or admin.status != "active":
+        raise HTTPException(status_code=401, detail="管理员账号不可用或登录已失效")
+    return admin
+
+
+def verify_super_admin(current_admin: models.Admin = Depends(verify_admin)) -> models.Admin:
+    """必须是总管理员。"""
+    if current_admin.role != "super":
+        raise HTTPException(status_code=403, detail="权限不足，仅总管理员可操作")
+    return current_admin
+
+
+def _is_super(admin: models.Admin) -> bool:
+    return bool(admin and admin.role == "super")
+
+
+def _admin_name_map(db: Session) -> dict:
+    return {a.id: a.username for a in db.query(models.Admin).all()}
 
 # ══════════════════════════════════════════════════════════════════════
 # Pydantic 请求模型
@@ -505,7 +782,17 @@ class BanUserRequest(BaseModel):
     device_id: str
 
 class AdminLoginRequest(BaseModel):
-    admin_token: str
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+class AdminApplyRequest(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    note: Optional[str] = Field(default=None, description="备注/联系方式")
+
+class AdminReviewRequest(BaseModel):
+    admin_id: int
+    action: str = Field(..., description="approve / reject / disable / enable")
 
 class AdjustUserTimeRequest(BaseModel):
     device_id: str   = Field(..., description="用户设备 ID")
@@ -525,7 +812,7 @@ def api_health():
     return {
         "ok": True,
         "service": "cardkey",
-        "server_time": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") + " UTC",
+        "server_time": _fmt_dt(_now_utc(), suffix=True),
         "xui_enabled": XUI_ENABLED,
         "socks_host": SOCKS_SERVER_HOST,
         "socks_port": SOCKS_SERVER_PORT,
@@ -551,29 +838,59 @@ async def page_index(request: Request):
     )
 
 
+
 @app.get("/admin", response_class=HTMLResponse, tags=["页面"])
-async def page_admin_login(request: Request):
-    session_cookie = request.cookies.get("admin_session") or ""
-    if secrets.compare_digest(session_cookie, ADMIN_SESSION_TOKEN):
-        return RedirectResponse(url="/admin/dashboard", status_code=302)
-    return templates.TemplateResponse(
-        request=request, name="admin_login.html", context={"error": None}
-    )
+async def page_admin_login(request: Request, db: Session = Depends(get_db)):
+    admin_id = _parse_admin_session(request.cookies.get("admin_session") or "")
+    if admin_id:
+        admin = db.query(models.Admin).filter(models.Admin.id == admin_id, models.Admin.status == "active").first()
+        if admin:
+            return RedirectResponse(url="/admin/dashboard", status_code=302)
+    return templates.TemplateResponse(request=request, name="admin_login.html", context={"error": None})
 
 
 @app.post("/admin/login", tags=["页面"])
-async def page_admin_do_login(req: AdminLoginRequest):
-    if secrets.compare_digest(req.admin_token.strip(), ADMIN_TOKEN):
-        response = JSONResponse({"success": True, "redirect": "/admin/dashboard"})
-        response.set_cookie(
-            key="admin_session",
-            value=ADMIN_SESSION_TOKEN,
-            max_age=8 * 60 * 60,
-            httponly=True,
-            samesite="lax",
-        )
-        return response
-    return JSONResponse({"detail": "管理员 Token 错误，请重试"}, status_code=401)
+async def page_admin_do_login(req: AdminLoginRequest, db: Session = Depends(get_db)):
+    admin = db.query(models.Admin).filter(models.Admin.username == req.username.strip()).first()
+    if not admin or admin.password_hash != _hash_password(req.password):
+        return JSONResponse({"detail": "账号或密码错误，请重试"}, status_code=401)
+    if admin.status == "pending":
+        return JSONResponse({"detail": "账号正在等待总管理员审核"}, status_code=403)
+    if admin.status == "rejected":
+        return JSONResponse({"detail": "申请未通过，请联系总管理员"}, status_code=403)
+    if admin.status == "disabled":
+        return JSONResponse({"detail": "账号已被禁用，请联系总管理员"}, status_code=403)
+    if admin.status != "active":
+        return JSONResponse({"detail": "账号状态异常，请联系总管理员"}, status_code=403)
+
+    response = JSONResponse({"success": True, "redirect": "/admin/dashboard", "role": admin.role})
+    response.set_cookie(
+        key="admin_session",
+        value=_make_admin_session(admin.id),
+        max_age=8 * 60 * 60,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
+
+
+@app.post("/admin/apply", tags=["页面"])
+async def page_admin_apply(req: AdminApplyRequest, db: Session = Depends(get_db)):
+    username = req.username.strip()
+    if db.query(models.Admin).filter(models.Admin.username == username).first():
+        return JSONResponse({"detail": "该后台账号已存在或已提交申请"}, status_code=409)
+
+    admin = models.Admin(
+        username=username,
+        password_hash=_hash_password(req.password),
+        role="agent",
+        status="pending",
+        note=(req.note or "").strip() or None,
+        created_at=_now_utc(),
+    )
+    db.add(admin)
+    db.commit()
+    return {"success": True, "message": "申请已提交，请等待总管理员审核"}
 
 
 @app.post("/admin/logout", tags=["页面"])
@@ -584,9 +901,15 @@ async def page_admin_logout():
 
 
 @app.get("/admin/dashboard", response_class=HTMLResponse, tags=["页面"])
-async def page_admin_dashboard(request: Request, _: None = Depends(verify_admin)):
+async def page_admin_dashboard(request: Request, current_admin: models.Admin = Depends(verify_admin)):
     return templates.TemplateResponse(
-        request=request, name="admin.html", context={}
+        request=request,
+        name="admin.html",
+        context={
+            "admin_username": current_admin.username,
+            "admin_role": current_admin.role,
+            "is_super": current_admin.role == "super",
+        },
     )
 
 
@@ -594,13 +917,24 @@ async def page_admin_dashboard(request: Request, _: None = Depends(verify_admin)
 # 管理员接口
 # ══════════════════════════════════════════════════════════════════════
 
+@app.get("/admin/me", tags=["管理员"])
+def admin_me(current_admin: models.Admin = Depends(verify_admin)):
+    return {
+        "id": current_admin.id,
+        "username": current_admin.username,
+        "role": current_admin.role,
+        "status": current_admin.status,
+        "is_super": current_admin.role == "super",
+    }
+
+
 @app.post("/admin/generate_keys", tags=["管理员"])
 def admin_generate_keys(
     req: GenerateKeysRequest,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_admin),
+    current_admin: models.Admin = Depends(verify_admin),
 ):
-    """批量生成卡密。"""
+    """批量生成卡密；记录生成者。"""
     generated = []
     for _ in range(req.count):
         for _ in range(10):
@@ -609,15 +943,57 @@ def admin_generate_keys(
                 break
         else:
             continue
-        db.add(models.Key(key_string=key_str, duration_days=req.duration_days))
+        db.add(models.Key(
+            key_string=key_str,
+            duration_days=req.duration_days,
+            created_by_admin_id=current_admin.id,
+            created_at=_now_utc(),
+        ))
         generated.append(key_str)
     db.commit()
     return {"success": True, "generated": len(generated), "duration_days": req.duration_days, "keys": generated}
 
 
+def _parse_filter_dt(v: Optional[str], label: str) -> Optional[datetime]:
+    if not v:
+        return None
+    try:
+        return _to_utc_from_local(datetime.fromisoformat(v))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"时间格式错误（{label}），请使用 YYYY-MM-DDTHH:MM 格式")
+
+
 @app.get("/admin/list_keys", tags=["管理员"])
-def admin_list_keys(db: Session = Depends(get_db), _: None = Depends(verify_admin)):
-    keys = db.query(models.Key).order_by(models.Key.created_at.desc()).all()
+def admin_list_keys(
+    admin_id: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    used: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_admin: models.Admin = Depends(verify_admin),
+):
+    q = db.query(models.Key)
+
+    if not _is_super(current_admin):
+        q = q.filter(models.Key.created_by_admin_id == current_admin.id)
+    elif admin_id:
+        q = q.filter(models.Key.created_by_admin_id == admin_id)
+
+    start_dt = _parse_filter_dt(start_time, "start_time")
+    end_dt = _parse_filter_dt(end_time, "end_time")
+    if start_dt:
+        q = q.filter(models.Key.created_at >= start_dt)
+    if end_dt:
+        q = q.filter(models.Key.created_at <= end_dt)
+
+    if used == "used":
+        q = q.filter(models.Key.is_used == True)  # noqa: E712
+    elif used == "unused":
+        q = q.filter(models.Key.is_used == False)  # noqa: E712
+
+    keys = q.order_by(models.Key.created_at.desc()).all()
+    admin_names = _admin_name_map(db)
+
     return {
         "total": len(keys),
         "keys": [
@@ -626,10 +1002,48 @@ def admin_list_keys(db: Session = Depends(get_db), _: None = Depends(verify_admi
                 "key_string": k.key_string,
                 "duration_days": k.duration_days,
                 "is_used": k.is_used,
-                "created_at": k.created_at.strftime("%Y-%m-%d %H:%M:%S") if k.created_at else None,
+                "created_by_admin_id": k.created_by_admin_id,
+                "created_by": admin_names.get(k.created_by_admin_id, "未知/旧数据"),
+                "created_at": _fmt_dt(k.created_at),
+                "used_by_username": k.used_by_username,
+                "used_at": _fmt_dt(k.used_at),
             }
             for k in keys
         ],
+    }
+
+
+@app.get("/admin/key_stats", tags=["管理员"])
+def admin_key_stats(
+    admin_id: Optional[int] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_admin: models.Admin = Depends(verify_admin),
+):
+    q = db.query(models.Key)
+    if not _is_super(current_admin):
+        q = q.filter(models.Key.created_by_admin_id == current_admin.id)
+    elif admin_id:
+        q = q.filter(models.Key.created_by_admin_id == admin_id)
+
+    start_dt = _parse_filter_dt(start_time, "start_time")
+    end_dt = _parse_filter_dt(end_time, "end_time")
+    if start_dt:
+        q = q.filter(models.Key.created_at >= start_dt)
+    if end_dt:
+        q = q.filter(models.Key.created_at <= end_dt)
+
+    keys = q.all()
+    by_days = {}
+    for k in keys:
+        by_days[str(k.duration_days)] = by_days.get(str(k.duration_days), 0) + 1
+
+    return {
+        "generated_total": len(keys),
+        "used_total": sum(1 for k in keys if k.is_used),
+        "unused_total": sum(1 for k in keys if not k.is_used),
+        "duration_days_summary": by_days,
     }
 
 
@@ -638,27 +1052,25 @@ def admin_list_users(
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_admin),
+    current_admin: models.Admin = Depends(verify_admin),
 ):
-    def _parse_dt(v: str, label: str) -> datetime:
-        try:
-            return datetime.fromisoformat(v)
-        except Exception:
-            raise HTTPException(status_code=400, detail=f"时间格式错误（{label}），请使用 YYYY-MM-DDTHH:MM 格式")
-
     q = db.query(models.User)
-    start_dt = _parse_dt(start_time, "start_time") if start_time else None
-    end_dt   = _parse_dt(end_time, "end_time") if end_time else None
-    if start_dt and end_dt and end_dt < start_dt:
-        raise HTTPException(status_code=400, detail="结束时间不能早于开始时间")
+    if not _is_super(current_admin):
+        q = q.filter(models.User.source_admin_id == current_admin.id)
+
+    start_dt = _parse_filter_dt(start_time, "start_time")
+    end_dt = _parse_filter_dt(end_time, "end_time")
     if start_dt:
         q = q.filter(models.User.created_at >= start_dt)
     if end_dt:
         q = q.filter(models.User.created_at <= end_dt)
+    if start_dt and end_dt and end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="结束时间不能早于开始时间")
 
     users = q.order_by(models.User.created_at.desc()).all()
-    now = datetime.utcnow()
+    now = _now_utc()
     changed = False
+    admin_names = _admin_name_map(db)
     result = []
     for u in users:
         if u.status == "active" and u.expire_time < now:
@@ -669,12 +1081,16 @@ def admin_list_users(
             "username": u.username,
             "device_id": u.device_id,
             "last_key": u.last_key,
-            "expire_time": u.expire_time.strftime("%Y-%m-%d %H:%M:%S") if u.expire_time else None,
+            "expire_time": _fmt_dt(u.expire_time),
             "status": u.status,
-            "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else None,
+            "created_at": _fmt_dt(u.created_at),
+            "socks_port": getattr(u, "socks_port", None),
+            "source_admin_id": getattr(u, "source_admin_id", None),
+            "source_admin": admin_names.get(getattr(u, "source_admin_id", None), "未知/旧数据"),
         })
     if changed:
         db.commit()
+        _sync_gost_users()
     return {"total": len(result), "users": result}
 
 
@@ -682,13 +1098,13 @@ def admin_list_users(
 def admin_adjust_user_time(
     req: AdjustUserTimeRequest,
     db: Session = Depends(get_db),
-    _: None = Depends(verify_admin),
+    _: models.Admin = Depends(verify_super_admin),
 ):
     user = db.query(models.User).filter(models.User.device_id == req.device_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
-    now = datetime.utcnow()
+    now = _now_utc()
     if req.delta_days >= 0:
         base_time = user.expire_time if user.expire_time > now else now
         user.expire_time = base_time + timedelta(days=req.delta_days)
@@ -699,6 +1115,7 @@ def admin_adjust_user_time(
         user.status = "active" if user.expire_time > now else "expired"
 
     db.commit()
+    _sync_gost_users()
     db.refresh(user)
 
     if user.status == "active":
@@ -710,33 +1127,123 @@ def admin_adjust_user_time(
         "success": True,
         "message": f"已调整 {req.delta_days} 天，当前状态：{user.status}",
         "device_id": user.device_id,
-        "expire_time": user.expire_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "expire_time": _fmt_dt(user.expire_time),
         "status": user.status,
     }
 
 
 @app.post("/admin/ban_user", tags=["管理员"])
-def admin_ban_user(req: BanUserRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+def admin_ban_user(req: BanUserRequest, db: Session = Depends(get_db), _: models.Admin = Depends(verify_super_admin)):
     user = db.query(models.User).filter(models.User.device_id == req.device_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     user.status = "banned"
     db.commit()
+    _sync_gost_users()
     _sync_xui_remove(user)
     return {"success": True, "message": f"用户 {user.username} 已封禁"}
 
 
 @app.post("/admin/unban_user", tags=["管理员"])
-def admin_unban_user(req: BanUserRequest, db: Session = Depends(get_db), _: None = Depends(verify_admin)):
+def admin_unban_user(req: BanUserRequest, db: Session = Depends(get_db), _: models.Admin = Depends(verify_super_admin)):
     user = db.query(models.User).filter(models.User.device_id == req.device_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
-    now = datetime.utcnow()
+    now = _now_utc()
     user.status = "active" if user.expire_time > now else "expired"
     db.commit()
+    _sync_gost_users()
     if user.status == "active":
         _sync_xui_upsert(user)
     return {"success": True, "message": f"用户 {user.username} 已解封，状态：{user.status}"}
+
+
+@app.get("/admin/list_admins", tags=["管理员"])
+def admin_list_admins(db: Session = Depends(get_db), _: models.Admin = Depends(verify_super_admin)):
+    admins = db.query(models.Admin).order_by(models.Admin.created_at.desc()).all()
+    rows = []
+    for a in admins:
+        kq = db.query(models.Key).filter(models.Key.created_by_admin_id == a.id)
+        rows.append({
+            "id": a.id,
+            "username": a.username,
+            "role": a.role,
+            "status": a.status,
+            "note": a.note,
+            "created_at": _fmt_dt(a.created_at),
+            "approved_at": _fmt_dt(a.approved_at),
+            "generated_total": kq.count(),
+            "used_total": kq.filter(models.Key.is_used == True).count(),  # noqa: E712
+        })
+    return {"total": len(rows), "admins": rows}
+
+
+@app.post("/admin/review_admin", tags=["管理员"])
+def admin_review_admin(req: AdminReviewRequest, db: Session = Depends(get_db), current_admin: models.Admin = Depends(verify_super_admin)):
+    target = db.query(models.Admin).filter(models.Admin.id == req.admin_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="管理员不存在")
+    if target.id == current_admin.id and req.action in ("disable", "reject"):
+        raise HTTPException(status_code=400, detail="不能禁用/拒绝自己")
+
+    action = req.action.lower().strip()
+    if action == "approve":
+        target.status = "active"
+        target.role = target.role or "agent"
+        target.approved_at = _now_utc()
+        target.approved_by_admin_id = current_admin.id
+    elif action == "reject":
+        target.status = "rejected"
+    elif action == "disable":
+        target.status = "disabled"
+    elif action == "enable":
+        target.status = "active"
+        if not target.approved_at:
+            target.approved_at = _now_utc()
+        target.approved_by_admin_id = current_admin.id
+    else:
+        raise HTTPException(status_code=400, detail="action 仅支持 approve/reject/disable/enable")
+
+    db.commit()
+    return {"success": True, "message": f"已更新管理员 {target.username} 状态为 {target.status}"}
+
+
+@app.get("/admin/online_users", tags=["管理员"])
+def admin_online_users(db: Session = Depends(get_db), _: models.Admin = Depends(verify_super_admin)):
+    """总管理员查看正在使用的用户：按 202 上一人一端口的 ESTABLISHED 连接判断。"""
+    users = db.query(models.User).filter(models.User.socks_port.isnot(None)).all()
+    ports = [int(u.socks_port) for u in users if u.socks_port]
+    counts = {p: 0 for p in ports}
+    try:
+        cmd = "ss -nt state established '( sport >= :28889 and sport <= :28999 )' || true"
+        result = subprocess.run(
+            ["ssh", "root@202.189.9.12", cmd],
+            text=True,
+            capture_output=True,
+            timeout=8,
+        )
+        output = result.stdout or ""
+        for p in ports:
+            counts[p] = output.count(f":{p} ")
+    except Exception as e:
+        logger.warning("[在线用户] 查询失败：%s", e)
+
+    admin_names = _admin_name_map(db)
+    rows = []
+    for u in users:
+        c = counts.get(int(u.socks_port), 0) if u.socks_port else 0
+        if c <= 0:
+            continue
+        rows.append({
+            "username": u.username,
+            "socks_port": u.socks_port,
+            "connection_count": c,
+            "status": u.status,
+            "expire_time": _fmt_dt(u.expire_time),
+            "created_at": _fmt_dt(u.created_at),
+            "source_admin": admin_names.get(getattr(u, "source_admin_id", None), "未知/旧数据"),
+        })
+    return {"total": len(rows), "users": rows}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -744,7 +1251,7 @@ def admin_unban_user(req: BanUserRequest, db: Session = Depends(get_db), _: None
 # ══════════════════════════════════════════════════════════════════════
 
 @app.get("/admin/list_files", tags=["管理员"])
-def admin_list_files(_: None = Depends(verify_admin)):
+def admin_list_files(_: models.Admin = Depends(verify_super_admin)):
     """列出 static/cert 和 static/config 目录下的文件。"""
     result = {}
     for category in ("cert", "config"):
@@ -758,7 +1265,7 @@ def admin_list_files(_: None = Depends(verify_admin)):
                     files.append({
                         "filename": fname,
                         "size": stat.st_size,
-                        "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        "modified": _fmt_dt(datetime.utcfromtimestamp(stat.st_mtime)),
                     })
         result[category] = files
     return result
@@ -768,7 +1275,7 @@ def admin_list_files(_: None = Depends(verify_admin)):
 async def admin_upload_file(
     category: str = Form(..., description="cert 或 config"),
     file: UploadFile = File(...),
-    _: None = Depends(verify_admin),
+    _: models.Admin = Depends(verify_super_admin),
 ):
     """上传（或覆盖）文件到 static/cert 或 static/config 目录。"""
     if category not in ("cert", "config"):
@@ -785,16 +1292,11 @@ async def admin_upload_file(
     with open(filepath, "wb") as f:
         f.write(content)
     logger.info("[文件管理] 已上传 %s/%s（%d 字节）", category, safe_name, len(content))
-    return {
-        "success": True,
-        "message": f"已上传 {safe_name} → {category}/",
-        "filename": safe_name,
-        "size": len(content),
-    }
+    return {"success": True, "message": f"已上传 {safe_name} → {category}/", "filename": safe_name, "size": len(content)}
 
 
 @app.post("/admin/delete_file", tags=["管理员"])
-def admin_delete_file(req: DeleteFileRequest, _: None = Depends(verify_admin)):
+def admin_delete_file(req: DeleteFileRequest, _: models.Admin = Depends(verify_super_admin)):
     """删除 static/cert 或 static/config 下的指定文件。"""
     if req.category not in ("cert", "config"):
         raise HTTPException(status_code=400, detail="category 仅允许 cert 或 config")
@@ -834,14 +1336,19 @@ def api_register(req: AccountRegisterRequest, db: Session = Depends(get_db)):
     ):
         # 已是该用户之前用本卡密注册的结果，直接幂等返回
         key_obj = db.query(models.Key).filter(models.Key.key_string == key_string).first()
-        # 补一次 3x-ui 同步（上一次可能因面板偶发抖动失败）
+        # 补一次同步（上一次可能因网络抖动失败），但不阻塞本次响应
+        _assign_missing_socks_port(existing, db)
+        _sync_gost_users()
+        db.refresh(existing)
         _sync_xui_upsert(existing)
         return {
             "success": True,
             "username": existing.username,
             "duration_days": key_obj.duration_days if key_obj else 0,
-            "expire_time": existing.expire_time.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
-            "proxy": _build_proxy_payload(existing.username, req.password),
+            "activated_at": _fmt_dt(existing.created_at, suffix=True),
+            "created_at": _fmt_dt(existing.created_at, suffix=True),
+            "expire_time": _fmt_dt(existing.expire_time, suffix=True),
+            "proxy": _build_proxy_payload(existing.username, req.password, getattr(existing, "socks_port", None)),
             "replayed": True,
         }
 
@@ -850,7 +1357,7 @@ def api_register(req: AccountRegisterRequest, db: Session = Depends(get_db)):
         update(models.Key)
         .where(models.Key.key_string == key_string)
         .where(models.Key.is_used == False)  # noqa: E712
-        .values(is_used=True)
+        .values(is_used=True, used_at=_now_utc(), used_by_username=req.username)
         .execution_options(synchronize_session="fetch")
     )
     result = db.execute(stmt)
@@ -875,7 +1382,7 @@ def api_register(req: AccountRegisterRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="该账号名已被注册，请换一个")
 
     key_obj     = db.query(models.Key).filter(models.Key.key_string == key_string).first()
-    expire_time = datetime.utcnow() + timedelta(days=key_obj.duration_days)
+    expire_time = _now_utc() + timedelta(days=key_obj.duration_days)
     device_id   = uuid.uuid4().hex
 
     user = models.User(
@@ -886,19 +1393,25 @@ def api_register(req: AccountRegisterRequest, db: Session = Depends(get_db)):
         last_key      = key_string,
         expire_time   = expire_time,
         status        = "active",
+        source_admin_id = key_obj.created_by_admin_id,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
+    _assign_missing_socks_port(user, db)
+    _sync_gost_users()
+    db.refresh(user)
     _sync_xui_upsert(user)
 
     return {
         "success": True,
         "username": req.username,
         "duration_days": key_obj.duration_days,
-        "expire_time": expire_time.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
-        "proxy": _build_proxy_payload(req.username, req.password),
+        "activated_at": _fmt_dt(user.created_at, suffix=True),
+        "created_at": _fmt_dt(user.created_at, suffix=True),
+        "expire_time": _fmt_dt(expire_time, suffix=True),
+        "proxy": _build_proxy_payload(req.username, req.password, getattr(user, "socks_port", None)),
     }
 
 
@@ -918,13 +1431,16 @@ def api_recharge(req: RechargeRequest, db: Session = Depends(get_db)):
     if (user.last_key or "").upper() == key_string:
         key_obj = db.query(models.Key).filter(models.Key.key_string == key_string).first()
         if key_obj and key_obj.is_used:
+            _assign_missing_socks_port(user, db)
+            _sync_gost_users()
+            db.refresh(user)
             _sync_xui_upsert(user)
             return {
                 "success": True,
                 "username": user.username,
                 "added_days": key_obj.duration_days,
-                "expire_time": user.expire_time.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
-                "proxy": _build_proxy_payload(user.username, req.password),
+                "expire_time": _fmt_dt(user.expire_time, suffix=True),
+                "proxy": _build_proxy_payload(user.username, req.password, getattr(user, "socks_port", None)),
                 "replayed": True,
             }
 
@@ -932,7 +1448,7 @@ def api_recharge(req: RechargeRequest, db: Session = Depends(get_db)):
         update(models.Key)
         .where(models.Key.key_string == key_string)
         .where(models.Key.is_used == False)  # noqa: E712
-        .values(is_used=True)
+        .values(is_used=True, used_at=_now_utc(), used_by_username=req.username)
         .execution_options(synchronize_session="fetch")
     )
     result = db.execute(stmt)
@@ -945,7 +1461,7 @@ def api_recharge(req: RechargeRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="该续期卡密已被使用，请勿重复操作！")
 
     key_obj    = db.query(models.Key).filter(models.Key.key_string == key_string).first()
-    now        = datetime.utcnow()
+    now        = _now_utc()
     base_time  = user.expire_time if user.expire_time > now else now
     new_expire = base_time + timedelta(days=key_obj.duration_days)
 
@@ -958,14 +1474,19 @@ def api_recharge(req: RechargeRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
+    _assign_missing_socks_port(user, db)
+    _sync_gost_users()
+    db.refresh(user)
     _sync_xui_upsert(user)
 
     return {
         "success": True,
         "username": user.username,
         "added_days": key_obj.duration_days,
-        "expire_time": new_expire.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
-        "proxy": _build_proxy_payload(user.username, req.password),
+        "activated_at": _fmt_dt(user.created_at, suffix=True),
+        "created_at": _fmt_dt(user.created_at, suffix=True),
+        "expire_time": _fmt_dt(new_expire, suffix=True),
+        "proxy": _build_proxy_payload(user.username, req.password, getattr(user, "socks_port", None)),
     }
 
 
@@ -980,28 +1501,76 @@ def api_query(req: QueryRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="查无此账号信息，请确认账号是否正确！")
 
-    now = datetime.utcnow()
+    now = _now_utc()
     if user.status == "active" and user.expire_time < now:
         user.status = "expired"
         db.commit()
+        db.refresh(user)
+        _sync_gost_users()
+        _sync_xui_remove(user)
 
-    days_left = max(0, (user.expire_time - now).days) if user.expire_time > now else 0
+    days_left = _ceil_days_left(user.expire_time, now) if user.expire_time > now else 0
 
     resp = {
         "username": user.username,
         "status": user.status,
-        "expire_time": user.expire_time.strftime("%Y-%m-%d %H:%M:%S") + " UTC",
+        "expire_time": _fmt_dt(user.expire_time, suffix=True),
         "days_left": days_left,
     }
 
     if req.password and user.status == "active":
         if user.password_hash == _hash_password(req.password):
-            resp["proxy"] = _build_proxy_payload(user.username, req.password)
+            _assign_missing_socks_port(user, db)
+            _sync_gost_users()
+            resp["proxy"] = _build_proxy_payload(user.username, req.password, getattr(user, "socks_port", None))
 
     return resp
 
 
 # ══════════════════════════════════════════════════════════════════════
+
+@app.get("/api/check", tags=["用户端"])
+def api_check(username: str = "", password: str = "", db: Session = Depends(get_db)):
+    """标准验证接口：给验证页 / 前端 / 运维探活使用。有效才返回代理参数。"""
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="缺少账号或密码")
+
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user or user.password_hash != _hash_password(password):
+        return {"success": False, "status": "invalid", "message": "账号或密码错误"}
+
+    if user.status == "banned":
+        _sync_xui_remove(user)
+        return {"success": False, "status": "banned", "message": "账号已被封禁"}
+
+    expired = _mark_user_expired_if_needed(user, db, remove_from_xui=True)
+    if expired or user.status == "expired":
+        return {
+            "success": False,
+            "status": "expired",
+            "message": "账号已到期，请续期后再使用",
+            "expire_time": _fmt_dt(user.expire_time, suffix=True),
+        }
+
+    # 数据库有效时补一次 3x-ui upsert，解决面板重装/手动删除后的自愈。
+    _sync_xui_upsert(user)
+    now = _now_utc()
+    return {
+        "success": True,
+        "status": "active",
+        "username": user.username,
+        "expire_time": _fmt_dt(user.expire_time, suffix=True),
+        "seconds_left": int((user.expire_time - now).total_seconds()),
+        "proxy": _build_proxy_payload(user.username, _resolve_socks_password(user), getattr(user, "socks_port", None)),
+    }
+
+
+@app.post("/api/check", tags=["用户端"])
+def api_check_post(req: QueryRequest, db: Session = Depends(get_db)):
+    if not req.password:
+        raise HTTPException(status_code=400, detail="缺少密码")
+    return api_check(username=req.username, password=req.password, db=db)
+
 # 配置文件 / 证书 下载接口
 # ----------------------------------------------------------------------
 # 前端底部三个按钮（下载配置 / 下载证书 / 导入节点）之二会落到这里。
@@ -1016,39 +1585,107 @@ def _find_first_existing(paths: list[str]) -> Optional[str]:
     return None
 
 
+def _find_latest_file(directory: str, suffixes: tuple[str, ...]) -> Optional[str]:
+    """在目录中按修改时间返回最新文件，用于支持后台上传任意文件名的证书/配置。"""
+    if not os.path.isdir(directory):
+        return None
+
+    candidates = []
+    for fname in os.listdir(directory):
+        fpath = os.path.join(directory, fname)
+        if os.path.isfile(fpath) and fname.lower().endswith(suffixes):
+            candidates.append(fpath)
+
+    if not candidates:
+        return None
+    return max(candidates, key=os.path.getmtime)
+
 @app.get("/download/config", tags=["用户端"])
-def download_config():
-    """下载 Shadowrocket 默认配置文件（.conf）。"""
-    path = _find_first_existing([
-        "static/config/FD.conf",
-        "static/config/default.conf",
-        "FD.conf",
-    ])
-    if not path:
+def download_config(username: str, password: str, db: Session = Depends(get_db)):
+    """下载带 SOCKS5 节点 + 规则的 Shadowrocket 配置。"""
+    user = _get_user_or_401(username, password, db)
+    socks_pwd = _resolve_socks_password(user)
+
+    config_dir = "static/config"
+    conf_files = [
+        os.path.join(config_dir, f)
+        for f in os.listdir(config_dir)
+        if f.lower().endswith(".conf")
+    ]
+    if not conf_files:
         raise HTTPException(status_code=404, detail="配置文件未部署，请联系管理员")
-    return FileResponse(
-        path,
+
+    latest_conf = max(conf_files, key=os.path.getmtime)
+
+    with open(latest_conf, "r", encoding="utf-8") as f:
+        rules_conf = f.read()
+
+    socks_port = getattr(user, "socks_port", None) or SOCKS_SERVER_PORT
+
+    proxy_block = (
+        "\n[Proxy]\n"
+        f"FengDu = socks5, {SOCKS_SERVER_HOST}, {socks_port}, "
+        f"{user.username}, {socks_pwd}, udp=true\n\n"
+        "[Proxy Group]\n"
+        "PROXY = select, FengDu\n\n"
+    )
+
+    if "[Rule]" in rules_conf:
+        final_conf = rules_conf.replace("[Rule]", proxy_block + "[Rule]", 1)
+    else:
+        final_conf = rules_conf + proxy_block
+
+    safe_un = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in user.username)
+
+    return PlainTextResponse(
+        final_conf,
         media_type="application/octet-stream",
-        filename="FengDu.conf",
+        headers={
+            "Content-Disposition": f'attachment; filename="FengDu-{safe_un}.conf"',
+        },
     )
 
 
 @app.get("/download/cert", tags=["用户端"])
 def download_cert():
-    """下载 Shadowrocket MITM 根证书（.crt）。iOS 需在「设置 → 通用 → VPN 与设备管理」信任该证书。"""
-    path = _find_first_existing([
-        "static/cert/Shadowrocket.crt",
-        "Shadowrocket20260422150506.crt",
-    ])
-    if not path:
-        raise HTTPException(status_code=404, detail="证书文件未部署，请联系管理员")
-    return FileResponse(
-        path,
-        media_type="application/x-x509-ca-cert",
-        filename="Shadowrocket.crt",
+    """下载最新上传的 Shadowrocket MITM 根证书。支持 .crt/.cer/.pem/.p12/.mobileconfig。"""
+    path = (
+        _find_latest_file("static/cert", (".crt", ".cer", ".pem", ".p12", ".mobileconfig"))
+        or _find_first_existing([
+            "Shadowrocket.crt",
+            "Shadowrocket20260422150506.crt",
+        ])
     )
 
+    if not path:
+        raise HTTPException(status_code=404, detail="证书文件未部署，请先在后台上传证书")
 
+    ext = os.path.splitext(path)[1].lower()
+    media_type_map = {
+        ".crt": "application/x-x509-ca-cert",
+        ".cer": "application/pkix-cert",
+        ".pem": "application/x-pem-file",
+        ".p12": "application/x-pkcs12",
+        ".mobileconfig": "application/x-apple-aspen-config",
+    }
+    media_type = media_type_map.get(ext, "application/octet-stream")
+
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=os.path.basename(path),
+        headers={"Cache-Control": "no-store"},
+    )
+
+VERIFY_PAGE_URL = os.getenv(
+    "VERIFY_PAGE_URL",
+    "http://45.116.79.29:8001/verify"
+)
+
+
+@app.get("/verify", tags=["用户端"])
+async def page_verify():
+    return RedirectResponse(url=VERIFY_PAGE_URL, status_code=302)
 # ══════════════════════════════════════════════════════════════════════
 # SOCKS5 订阅分发接口（供 shadowrocket://add/sub/<url> 调用）
 # ----------------------------------------------------------------------
@@ -1076,20 +1713,25 @@ def get_subscription(
         raise HTTPException(status_code=403, detail="该账号已被封禁，请联系客服处理！")
 
     # ── 卡密有效期校验 ────────────────────────────────────────────
-    now = datetime.utcnow()
+    now = _now_utc()
     if user.expire_time < now:
         if user.status != "expired":
             user.status = "expired"
             db.commit()
+            db.refresh(user)
+        _sync_gost_users()
+        _sync_xui_remove(user)
         raise HTTPException(status_code=403, detail="该账号的卡密已过期，请充值续期后再试！")
 
     # 状态修复：过期态 → 活跃
     if user.status != "active":
         user.status = "active"
         db.commit()
+        _sync_gost_users()
+        db.refresh(user)
 
     # ── 返回纯明文 socks5:// URI ──────────────────────────────────
-    socks_uri = _build_socks5_uri(user.username, password)
+    socks_uri = _build_socks5_uri(user.username, password, getattr(user, "socks_port", None))
     safe_un = "".join(c if (c.isalnum() or c in "-_.") else "_" for c in user.username)
     return PlainTextResponse(
         content=socks_uri,
@@ -1099,7 +1741,109 @@ def get_subscription(
         },
     )
 
+@app.get("/api/online")
+def check_online(username: str, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == username).first()
+    if not user:
+        return {
+            "success": False,
+            "status": "invalid",
+            "message": "账号不存在"
+        }
 
+    if user.status == "banned":
+        return {
+            "success": False,
+            "status": "banned",
+            "message": "账号已封禁"
+        }
+
+    if user.expire_time < _now_utc():
+        user.status = "expired"
+        db.commit()
+        _sync_gost_users()
+        _sync_xui_remove(user)
+        return {
+            "success": False,
+            "status": "expired",
+            "message": "账号已到期"
+        }
+
+    try:
+        xui = get_xui()
+        xui._ensure_login()
+
+        resp = xui._session.post(
+            xui._url("/panel/api/inbounds/onlines"),
+            timeout=xui.timeout,
+            verify=xui.verify_ssl,
+        )
+
+        data = resp.json()
+
+        if not data.get("success"):
+            return {
+                "success": False,
+                "status": "error",
+                "message": data.get("msg") or "3x-ui 在线状态接口失败"
+            }
+
+        online_users = data.get("obj") or []
+
+        if user.username in online_users:
+            return {
+                "success": True,
+                "status": "online",
+                "message": "当前账号正在连接服务器"
+            }
+
+        return {
+            "success": True,
+            "status": "offline",
+            "message": "当前账号未连接服务器"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "error",
+            "message": str(e)
+        }
+
+@app.get("/api/ping")
+def proxy_ping(request: Request):
+    ip = request.client.host
+
+    return {
+        "success": True,
+        "ip": ip,
+        "message": "pong"
+    }
+@app.get("/api/node-health")
+def api_node_health():
+    try:
+        r = requests.get("http://202.189.9.12:8002/health", timeout=3)
+        data = r.json()
+
+        if data.get("success") and data.get("status") == "node_ok":
+            return {
+                "success": True,
+                "status": "online",
+                "message": "节点服务正常"
+            }
+
+        return {
+            "success": False,
+            "status": "offline",
+            "message": "节点异常"
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "status": "offline",
+            "message": str(e)
+        }
 # ── 直接 python main.py 启动时的入口 ──────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
