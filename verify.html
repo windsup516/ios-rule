@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>节点防护验证</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: #070d18;
+      color: #e8f4ff;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.2rem;
+      overflow-x: hidden;
+      position: relative;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,240,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,240,255,0.025) 1px, transparent 1px);
+      background-size: 46px 46px;
+      pointer-events: none;
+    }
+    body::after {
+      content: "";
+      position: fixed;
+      width: 520px;
+      height: 520px;
+      right: -180px;
+      top: -180px;
+      background: radial-gradient(circle, rgba(0,240,255,0.12), transparent 65%);
+      pointer-events: none;
+    }
+    .glow-left {
+      position: fixed;
+      width: 480px;
+      height: 480px;
+      left: -190px;
+      bottom: -210px;
+      background: radial-gradient(circle, rgba(139,92,246,0.12), transparent 68%);
+      pointer-events: none;
+    }
+    .card {
+      width: 100%;
+      max-width: 430px;
+      position: relative;
+      z-index: 1;
+      background: rgba(14, 22, 34, 0.92);
+      border: 1px solid rgba(120, 150, 180, 0.28);
+      border-radius: 22px;
+      padding: 1.55rem;
+      box-shadow: 0 28px 80px rgba(0,0,0,0.42), inset 0 0 40px rgba(0,240,255,0.035);
+      backdrop-filter: blur(18px);
+    }
+    .title {
+      text-align: center;
+      font-size: 1.28rem;
+      font-weight: 850;
+      letter-spacing: .04em;
+      margin-bottom: 1.25rem;
+      color: #6bb7ff;
+    }
+    .title span { color: #00f0ff; }
+    .status-box {
+      border-radius: 18px;
+      padding: 1.35rem 1rem;
+      text-align: center;
+      border: 2px solid rgba(255, 80, 80, .8);
+      background: rgba(255, 45, 85, .075);
+      box-shadow: 0 0 32px rgba(255, 80, 80, .08);
+      transition: .25s ease;
+    }
+    .status-box.online {
+      border-color: rgba(0, 240, 255, .85);
+      background: rgba(0, 240, 255, .075);
+      box-shadow: 0 0 32px rgba(0, 240, 255, .13);
+    }
+    .status-box.checking {
+      border-color: rgba(255, 170, 0, .8);
+      background: rgba(255, 170, 0, .075);
+      box-shadow: 0 0 32px rgba(255, 170, 0, .1);
+    }
+    .status-icon {
+      font-size: 4.6rem;
+      line-height: 1;
+      margin-bottom: .65rem;
+      color: #ff4d4d;
+      font-weight: 900;
+      text-shadow: 0 0 20px rgba(255,77,77,.3);
+    }
+    .status-box.online .status-icon {
+      color: #00f0ff;
+      text-shadow: 0 0 22px rgba(0,240,255,.4);
+    }
+    .status-box.checking .status-icon {
+      color: #ffb020;
+      text-shadow: 0 0 22px rgba(255,176,32,.3);
+      animation: pulse 1.15s infinite;
+    }
+    @keyframes pulse { 50% { opacity: .45; transform: scale(.96); } }
+    .status-main {
+      font-size: 1.38rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      color: #ff5c5c;
+    }
+    .status-box.online .status-main { color: #00f0ff; }
+    .status-box.checking .status-main { color: #ffb020; }
+    .status-sub {
+      margin-top: .45rem;
+      font-size: .82rem;
+      color: rgba(232,244,255,.54);
+      line-height: 1.6;
+    }
+    .input-group { margin-top: 1.15rem; }
+    .label {
+      font-size: .72rem;
+      color: rgba(232,244,255,.48);
+      letter-spacing: .12em;
+      margin-bottom: .45rem;
+      text-transform: uppercase;
+    }
+    .input {
+      width: 100%;
+      padding: .82rem .95rem;
+      border-radius: 13px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.055);
+      color: #e8f4ff;
+      font-size: .95rem;
+      outline: none;
+      transition: border-color .2s, box-shadow .2s, background .2s;
+    }
+    .input:focus {
+      border-color: rgba(0,240,255,.45);
+      background: rgba(0,240,255,.045);
+      box-shadow: 0 0 0 3px rgba(0,240,255,.08);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .8rem;
+      margin-top: 1rem;
+    }
+    .mini-card {
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      background: rgba(0,0,0,.24);
+      padding: .85rem .5rem;
+      text-align: center;
+    }
+    .mini-value {
+      font-size: 1.45rem;
+      font-weight: 900;
+      color: #ff9345;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .mini-value.on { color: #00f0ff; }
+    .mini-label {
+      margin-top: .32rem;
+      font-size: .75rem;
+      color: rgba(232,244,255,.52);
+    }
+    .time-box {
+      margin-top: 1rem;
+      padding: .85rem .95rem;
+      border-radius: 12px;
+      background: rgba(0,0,0,.38);
+      color: rgba(232,244,255,.62);
+      font-size: .84rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .btn {
+      width: 100%;
+      margin-top: 1rem;
+      padding: .86rem;
+      border-radius: 13px;
+      border: 1px solid rgba(0,240,255,.2);
+      background: rgba(255,255,255,.045);
+      color: #6bb7ff;
+      font-size: .95rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .btn:active { transform: scale(.985); }
+    .back {
+      display: block;
+      text-align: center;
+      margin-top: 1rem;
+      color: rgba(232,244,255,.58);
+      text-decoration: none;
+      font-size: .9rem;
+    }
+    .tip {
+      display: none;
+      margin-top: .8rem;
+      color: #ffcf80;
+      background: rgba(255,170,0,.08);
+      border: 1px solid rgba(255,170,0,.22);
+      border-radius: 10px;
+      padding: .65rem .8rem;
+      font-size: .78rem;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <div class="glow-left"></div>
+  <div class="card">
+    <div class="title">🛡️ <span>节点防护</span>验证</div>
+
+    <div id="statusBox" class="status-box checking">
+      <div id="statusIcon" class="status-icon">●</div>
+      <div id="statusMain" class="status-main">正在检测</div>
+      <div id="statusSub" class="status-sub">请确认 Shadowrocket 已开启，并选择本站节点</div>
+    </div>
+
+    <div class="input-group">
+      <div class="label">会员账号</div>
+      <input id="username" class="input" type="text" placeholder="可填写账号用于记录，不影响出口检测" autocomplete="off" />
+    </div>
+
+    <div class="row">
+      <div class="mini-card">
+        <div id="onlineValue" class="mini-value">--</div>
+        <div class="mini-label">防护状态</div>
+      </div>
+      <div class="mini-card">
+        <div id="delayValue" class="mini-value">--</div>
+        <div class="mini-label">检测延迟(ms)</div>
+      </div>
+    </div>
+
+    <div id="timeBox" class="time-box">系统时间：--</div>
+    <button class="btn" onclick="manualCheck()">重新检测</button>
+    <div id="tip" class="tip"></div>
+    <a class="back" href="/">← 返回主页</a>
+  </div>
+
+<script>
+  const NODE_IP = '202.189.9.12';
+  const statusBox = document.getElementById('statusBox');
+  const statusIcon = document.getElementById('statusIcon');
+  const statusMain = document.getElementById('statusMain');
+  const statusSub = document.getElementById('statusSub');
+  const onlineValue = document.getElementById('onlineValue');
+  const delayValue = document.getElementById('delayValue');
+  const timeBox = document.getElementById('timeBox');
+  const tip = document.getElementById('tip');
+
+  function nowText() {
+    return new Date().toLocaleString('zh-CN', { hour12: false });
+  }
+
+  function setStatus(type, main, sub) {
+    statusBox.className = 'status-box ' + (type || '');
+    onlineValue.className = 'mini-value' + (type === 'online' ? ' on' : '');
+    if (type === 'online') {
+      statusIcon.textContent = '✓';
+      onlineValue.textContent = 'ON';
+    } else if (type === 'checking') {
+      statusIcon.textContent = '●';
+      onlineValue.textContent = '--';
+    } else {
+      statusIcon.textContent = '×';
+      onlineValue.textContent = 'OFF';
+    }
+    statusMain.textContent = main;
+    statusSub.textContent = sub;
+    timeBox.textContent = '系统时间：' + nowText();
+  }
+
+  async function checkByExitIp() {
+    setStatus('checking', '正在检测', '正在检测当前浏览器出口是否经过本站节点');
+    tip.style.display = 'none';
+    const started = performance.now();
+    try {
+      const res = await fetch('http://106.14.137.59:8001/ping?_=' + Date.now(), { cache: 'no-store' });
+      const data = await res.json();
+      const ip = String(data.ip || '').trim();
+      delayValue.textContent = Math.max(1, Math.round(performance.now() - started));
+
+      if (ip === NODE_IP) {
+        setStatus('online', '防护已启动', '当前浏览器流量正在通过本站节点出口');
+      } else {
+        setStatus('', '防护未启动', '当前浏览器未通过本站节点出口，请检查小火箭是否开启');
+      }
+    } catch (e) {
+      delayValue.textContent = '--';
+      setStatus('', '检测失败', '无法连接本站检测接口，请确认 8001 服务与节点是否正常');
+      tip.style.display = 'block';
+      tip.textContent = e.message || '网络错误';
+    }
+  }
+
+  function manualCheck() { checkByExitIp(); }
+
+  checkByExitIp();
+  setInterval(checkByExitIp, 5000);
+</script>
+</body>
+</html>

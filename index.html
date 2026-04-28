@@ -378,7 +378,7 @@
     }
     .qa-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(2, 1fr);
       gap: 0.55rem;
     }
     .qa-btn {
@@ -424,6 +424,82 @@
     }
     .import-hint b { color: #ffd98a; }
 
+
+
+    /* ── 设备连接验证 ── */
+    .online-check-card {
+      display: block;
+      margin-top: 1rem;
+      padding: 1rem 1.1rem;
+      background: linear-gradient(135deg, rgba(0,240,255,0.05), rgba(139,92,246,0.06));
+      border: 1px solid rgba(0,240,255,0.16);
+      border-radius: 14px;
+    }
+    .online-check-title {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      color: rgba(0,240,255,0.82);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 0.75rem;
+    }
+    .online-status-panel {
+      display: none;
+      align-items: center;
+      gap: 0.8rem;
+      margin-top: 0.85rem;
+      padding: 0.9rem 1rem;
+      background: rgba(0,0,0,0.26);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 12px;
+    }
+    .online-orb {
+      width: 42px;
+      height: 42px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      background: rgba(122,143,171,0.12);
+      border: 1px solid rgba(122,143,171,0.25);
+      box-shadow: 0 0 20px rgba(122,143,171,0.08);
+    }
+    .online-orb.online {
+      background: rgba(0,240,255,0.12);
+      border-color: rgba(0,240,255,0.45);
+      box-shadow: 0 0 26px rgba(0,240,255,0.3);
+      color: #00F0FF;
+    }
+    .online-orb.offline {
+      background: rgba(255,170,0,0.10);
+      border-color: rgba(255,170,0,0.35);
+      box-shadow: 0 0 22px rgba(255,170,0,0.16);
+      color: #ffb020;
+    }
+    .online-orb.error {
+      background: rgba(255,70,70,0.10);
+      border-color: rgba(255,70,70,0.35);
+      box-shadow: 0 0 22px rgba(255,70,70,0.14);
+      color: #ff6464;
+    }
+    .online-text-main {
+      color: #e8f4ff;
+      font-size: 0.9rem;
+      font-weight: 800;
+      margin-bottom: 0.15rem;
+    }
+    .online-text-sub {
+      color: rgba(255,255,255,0.42);
+      font-size: 0.73rem;
+      line-height: 1.5;
+    }
+
+
     @media (max-width: 360px) {
       .qa-grid { grid-template-columns: 1fr; }
     }
@@ -462,7 +538,7 @@
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('register', this)">注&nbsp;册</button>
       <button class="tab-btn"        onclick="switchTab('recharge', this)">激活权益</button>
-      <button class="tab-btn"        onclick="switchTab('query',    this)">状&nbsp;态</button>
+      <button class="tab-btn"        onclick="switchTab('query',    this)">验&nbsp;证</button>
     </div>
 
     <!-- ══ 注册 ══ -->
@@ -565,8 +641,23 @@
                placeholder="填写后可一键导入小火箭"
                autocomplete="off" />
       </div>
-      <button class="btn-submit" onclick="doQuery()">查询节点状态</button>
+      <button class="btn-submit" onclick="doQuery()">查询权益状态</button>
       <div id="qry-error" class="alert alert-error"></div>
+
+      <div class="online-check-card">
+        <div class="online-check-title">📡 设备连接验证 · ONLINE CHECK</div>
+        <div class="cyber-tip" style="margin-top:0;">
+          先在手机上开启小火箭节点，然后点击下方按钮。系统会向服务器查询该账号是否正在连接节点。
+        </div>
+        <button class="btn-submit" style="margin-top:.8rem;" onclick="checkOnline()">检测是否已连接服务器</button>
+        <div id="online-panel" class="online-status-panel">
+          <div id="online-orb" class="online-orb">●</div>
+          <div>
+            <div id="online-main" class="online-text-main">等待检测</div>
+            <div id="online-sub" class="online-text-sub">请输入账号后点击检测</div>
+          </div>
+        </div>
+      </div>
 
       <div id="qry-result" class="result-card">
         <div class="result-row"><span class="result-label">会员账号</span><span class="result-value" id="qry-res-user"></span></div>
@@ -591,16 +682,21 @@
     </div>
   </div>
 
-  <!-- 底部快捷操作：下载配置 / 下载证书 / 导入节点 -->
+  <!-- 底部快捷操作：防护验证 / 下载配置 / 下载证书 / 导入节点 -->
   <div class="quick-actions">
     <div class="qa-title">快捷工具 · Quick Actions</div>
     <div class="qa-grid">
-      <a class="qa-btn" href="/download/config" download>
+      <a class="qa-btn" href="/verify">
+        <span class="qa-icon">🛡️</span>
+        <span class="qa-label">防护验证</span>
+        <span class="qa-sub">LIVE CHECK</span>
+      </a>
+      <a class="qa-btn" href="#" onclick="downloadCurrentConfig(event)">
         <span class="qa-icon">📥</span>
         <span class="qa-label">下载配置</span>
         <span class="qa-sub">CONFIG</span>
       </a>
-      <a class="qa-btn" href="/download/cert" download>
+      <a class="qa-btn" href="#" onclick="downloadCert(event)">
         <span class="qa-icon">🔒</span>
         <span class="qa-label">下载证书</span>
         <span class="qa-sub">MITM CERT</span>
@@ -629,6 +725,14 @@
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('tab-' + name).classList.add('active');
     el.classList.add('active');
+
+    // 进入“验证”页时，若已经填写账号，自动检测一次
+    if (name === 'query') {
+      setTimeout(() => {
+        const username = getVal('qry-username');
+        if (username) checkOnline();
+      }, 250);
+    }
   }
 
   function getVal(id)  { return document.getElementById(id).value.trim(); }
@@ -722,34 +826,92 @@
     }
   }
 
+  function saveCurrentAccount(username, password, proxy) {
+    if (!username || !password) return;
+    const data = { username, password, proxy: proxy || null, savedAt: Date.now() };
+    try { localStorage.setItem('fd_current_account', JSON.stringify(data)); } catch (_) {}
+  }
+
+  function getCurrentAccount() {
+    const active = document.querySelector('.tab-content.active');
+    const order = active ? [active.id.replace('tab-', '')] : [];
+    for (const k of ['register', 'recharge', 'query']) {
+      if (!order.includes(k)) order.push(k);
+    }
+    const prefixMap = { register: 'reg', recharge: 'rch', query: 'qry' };
+    for (const t of order) {
+      const p = prefixMap[t];
+      const username = getVal(`${p}-username`);
+      const password = getVal(`${p}-password`);
+      if (username && password) return { username, password };
+    }
+    try {
+      const cached = JSON.parse(localStorage.getItem('fd_current_account') || '{}');
+      if (cached.username && cached.password) return cached;
+    } catch (_) {}
+    return { username: '', password: '' };
+  }
+
+  function buildConfigUrl(username, password) {
+    if (!username || !password) return '';
+    return `${BASE_URL}/download/config?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+  }
+
   /**
-   * 构造 `shadowrocket://add/sub/<订阅URL>` 一键导入链接
-   * - 订阅 URL 形如：http://<base>/sub?username=xxx&password=yyy
-   * - 账号密码经过 encodeURIComponent 转义，避免特殊字符破坏 URL
+   * 一键导入完整 Shadowrocket 配置（包含 SOCKS5 节点 + 规则）。
+   * 后端会按用户自己的 socks_port 生成端口，例如 28890。
    */
   function buildImportUrl(username, password) {
-    if (!username || !password) return '';
-    const subUrl = `${BASE_URL}/sub?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
-    return `shadowrocket://add/sub/${subUrl}`;
+    const configUrl = buildConfigUrl(username, password);
+    if (!configUrl) return '';
+    return `shadowrocket://add/sub/${encodeURIComponent(configUrl)}`;
+  }
+
+  function applyProxyToManual(prefix, proxy) {
+    if (!proxy) return;
+    const hostEl = document.getElementById(prefix + '-m-host');
+    const portEl = document.getElementById(prefix + '-m-port');
+    if (hostEl && proxy.host) hostEl.textContent = proxy.host;
+    if (portEl && proxy.port) portEl.textContent = proxy.port;
   }
 
   /**
    * 把一组 SOCKS5 参数渲染到对应前缀（reg / rch / qry）的
    * 「一键导入按钮 + 手动配置对照表」区域。
    */
-  function renderProxyArea(prefix, username, password) {
+  function renderProxyArea(prefix, username, password, proxy = null) {
     if (!username || !password) {
       showEl(prefix + '-import-btn', false);
       showEl(prefix + '-manual-box', false);
       return;
     }
+    saveCurrentAccount(username, password, proxy);
     const importEl = document.getElementById(prefix + '-import-btn');
     importEl.setAttribute('href', buildImportUrl(username, password));
     importEl.style.display = 'block';
 
     setText(prefix + '-m-user', username);
     setText(prefix + '-m-pass', password);
+    applyProxyToManual(prefix, proxy);
     showEl(prefix + '-manual-box', true);
+  }
+
+  function needAccountHint() {
+    const hint = document.getElementById('qa-hint');
+    hint.style.display = 'block';
+    hint.innerHTML = '⚠️ 请先在上方 <b>注册 / 激活权益 / 验证</b> 中填写账号和密码，或先查询一次权益状态，然后再使用下载/导入。';
+  }
+
+  function downloadCurrentConfig(ev) {
+    if (ev) ev.preventDefault();
+    const { username, password } = getCurrentAccount();
+    if (!username || !password) { needAccountHint(); return; }
+    window.location.href = buildConfigUrl(username, password);
+  }
+
+  function downloadCert(ev) {
+    if (ev) ev.preventDefault();
+    window.location.href = `${BASE_URL}/download/cert`;
   }
 
   function copyValue(elId, btn) {
@@ -789,7 +951,7 @@
       document.getElementById('reg-success').style.display = 'block';
       document.getElementById('reg-success').textContent =
         `节点权益已激活！有效期 ${data.duration_days} 天，到期：${data.expire_time}`;
-      renderProxyArea('reg', username, password);
+      renderProxyArea('reg', username, password, data.proxy);
       showEl('reg-tip', true);
     } catch (e) {
       showError('reg', e.message);
@@ -817,7 +979,7 @@
       setText('rch-res-days',   `+${data.added_days} 天`);
       setText('rch-res-expire', data.expire_time);
       document.getElementById('rch-result').style.display = 'block';
-      renderProxyArea('rch', username, password);
+      renderProxyArea('rch', username, password, data.proxy);
     } catch (e) {
       showError('rch', e.message);
     } finally {
@@ -852,14 +1014,61 @@
       document.getElementById('qry-result').style.display = 'block';
 
       if (data.proxy && password) {
-        renderProxyArea('qry', username, password);
+        renderProxyArea('qry', username, password, data.proxy);
       }
     } catch (e) {
       showError('qry', e.message);
     } finally {
-      btn.disabled = false; btn.textContent = '查询节点状态';
+      btn.disabled = false; btn.textContent = '查询权益状态';
     }
   }
+
+
+  function setOnlinePanel(kind, title, sub) {
+    const panel = document.getElementById('online-panel');
+    const orb = document.getElementById('online-orb');
+    const main = document.getElementById('online-main');
+    const subEl = document.getElementById('online-sub');
+
+    panel.style.display = 'flex';
+    orb.className = 'online-orb ' + kind;
+    orb.textContent = kind === 'online' ? '✓' : (kind === 'offline' ? '!' : '×');
+    main.textContent = title;
+    subEl.textContent = sub;
+  }
+
+  async function checkOnline() {
+    const username = getVal('qry-username') || getVal('reg-username') || getVal('rch-username');
+    if (!username) {
+      setOnlinePanel('error', '缺少账号', '请先在验证页输入会员账号，再检测设备连接状态。');
+      return;
+    }
+
+    setOnlinePanel('offline', '正在检测...', '正在向服务器查询当前账号的节点连接状态。');
+    try {
+      const res = await fetch(`/api/online?username=${encodeURIComponent(username)}`, { method: 'GET' });
+      let data = {};
+      try { data = await res.json(); } catch (_) {}
+
+      if (!res.ok) {
+        setOnlinePanel('error', '检测失败', data.detail || `服务器返回 HTTP ${res.status}`);
+        return;
+      }
+
+      if (data.status === 'online') {
+        setOnlinePanel('online', '已连接服务器', `账号 ${username} 当前正在通过节点连接服务器。`);
+      } else if (data.status === 'offline') {
+        setOnlinePanel('offline', '当前未检测到连接', '请确认小火箭已开启，并且正在使用本页面下发的节点。');
+      } else if (data.status === 'invalid') {
+        setOnlinePanel('error', '账号不存在', '服务器没有找到这个会员账号。');
+      } else {
+        setOnlinePanel('error', '检测异常', data.msg || '服务器没有返回有效的在线状态。');
+      }
+    } catch (e) {
+      setOnlinePanel('error', '网络检测失败', e.message || '无法连接到服务器接口。');
+    }
+  }
+
 
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
@@ -871,45 +1080,55 @@
   });
 
   /**
-   * 底部「导入节点」快捷入口：
-   * 1. 从当前激活的 Tab 抓取账号密码；
-   * 2. 三个都没填 → 提示用户先在上方表单输入账号密码；
-   * 3. 已填 → 直接跳转 `shadowrocket://add/sub/...` 触发小火箭一键导入。
+   * 底部「导入节点」快捷入口：导入完整 .conf 配置，包含节点 + 规则。
    */
   function doQuickImport(ev) {
     if (ev) ev.preventDefault();
     const hint = document.getElementById('qa-hint');
-
-    // 依次从 register / recharge / query 三个 Tab 取账号密码，优先当前激活的
-    const active = document.querySelector('.tab-content.active');
-    const order = active ? [active.id.replace('tab-', '')] : [];
-    for (const k of ['register', 'recharge', 'query']) {
-      if (!order.includes(k)) order.push(k);
-    }
-    const prefixMap = { register: 'reg', recharge: 'rch', query: 'qry' };
-
-    let username = '', password = '';
-    for (const t of order) {
-      const p = prefixMap[t];
-      username = getVal(`${p}-username`);
-      password = getVal(`${p}-password`);
-      if (username && password) break;
-    }
+    const { username, password } = getCurrentAccount();
 
     if (!username || !password) {
-      hint.style.display = 'block';
-      hint.innerHTML = '⚠️ 请先在上方的 <b>注册 / 激活权益 / 状态</b> 中任选一个 Tab，填写账号和密码（状态页的密码是选填但此处必须填），然后再点此按钮。';
+      needAccountHint();
       return;
     }
 
     hint.style.display = 'block';
     const safeUser = username.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    hint.innerHTML = `🚀 正在为账号 <b>${safeUser}</b> 启动小火箭一键导入，如未自动跳转请确认已安装 Shadowrocket。`;
-
-    const url = buildImportUrl(username, password);
-    // 用 location.href 而不是新开窗口，避免 Safari 拦截 scheme
-    window.location.href = url;
+    hint.innerHTML = `🚀 正在为账号 <b>${safeUser}</b> 导入完整小火箭配置，如未自动跳转请确认已安装 Shadowrocket。`;
+    window.location.href = buildImportUrl(username, password);
   }
+
+  // 验证页实时检测：输入账号后自动检测，并每 5 秒刷新一次
+  let onlineAutoTimer = null;
+  let onlineTypingTimer = null;
+
+  function startOnlineAutoCheck() {
+    if (onlineAutoTimer) clearInterval(onlineAutoTimer);
+    onlineAutoTimer = setInterval(() => {
+      const active = document.querySelector('.tab-content.active');
+      const username = getVal('qry-username');
+      if (active && active.id === 'tab-query' && username) {
+        checkOnline();
+      }
+    }, 5000);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    const queryInput = document.getElementById('qry-username');
+    if (queryInput) {
+      queryInput.addEventListener('input', () => {
+        clearTimeout(onlineTypingTimer);
+        const username = getVal('qry-username');
+        if (!username) {
+          setOnlinePanel('offline', '等待检测', '请输入会员账号后，系统会自动检测连接状态。');
+          return;
+        }
+        onlineTypingTimer = setTimeout(() => checkOnline(), 700);
+      });
+    }
+    startOnlineAutoCheck();
+  });
+
 </script>
 </body>
 </html>

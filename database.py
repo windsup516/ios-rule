@@ -3,11 +3,14 @@
 使用 SQLAlchemy 连接 SQLite，极简配置，方便迁移和备份（只需复制 .db 文件）
 """
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 # SQLite 数据库文件路径，生产环境可改为绝对路径
-SQLALCHEMY_DATABASE_URL = "sqlite:///./cardkey.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/cardkey.db")
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite:///./data/"):
+    os.makedirs("data", exist_ok=True)
 
 # check_same_thread=False 允许多线程访问（FastAPI 多线程场景必须设置）
 engine = create_engine(
